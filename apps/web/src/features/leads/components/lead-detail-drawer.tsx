@@ -1,19 +1,9 @@
 "use client";
 
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  ExternalLink,
-  Globe,
-  Info,
-  Mail,
-  MessageSquare,
-  Phone,
-  X,
-} from "lucide-react";
+import { Check, Copy, ExternalLink, Globe, Mail, MessageSquare, Phone, X } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { LeadSelect } from "@/features/lead-generation/components/lead-select";
 import {
   formatFullUtcCaptured,
   formatLeadTag,
@@ -23,6 +13,7 @@ import {
 } from "../lib/format";
 import type { LeadDetail, LeadStatus } from "../lib/types";
 import { LeadConversationTranscript } from "./lead-conversation-transcript";
+import { QualificationIndicator } from "./qualification-indicator";
 
 interface LeadDetailDrawerProps {
   lead: LeadDetail;
@@ -32,25 +23,13 @@ interface LeadDetailDrawerProps {
   onClose: () => void;
   onUpdateStatus?: (newStatus: LeadStatus) => Promise<void> | void;
 }
-
-const STATUS_OPTIONS: LeadStatus[] = ["new", "contacted", "qualified", "disqualified"];
-
-function extractHostname(url?: string | null): string | null {
-  if (!url) return null;
-  try {
-    const withProto =
-      url.startsWith("http://") || url.startsWith("https://") ? url : `https://${url}`;
-    const parsed = new URL(withProto);
-    return parsed.hostname.replace(/^www\./, "");
-  } catch {
-    return url.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0] || null;
-  }
-}
-
-function ensureAbsoluteUrl(url: string): string {
-  if (url.startsWith("http://") || url.startsWith("https://")) return url;
-  return `https://${url}`;
-}
+const normalizeKey = (key: string) => key.toLowerCase().replace(/[^a-z0-9]/g, "");
+const statusOptions: { value: LeadStatus; label: string }[] = [
+  { value: "new", label: "New" },
+  { value: "contacted", label: "Contacted" },
+  { value: "qualified", label: "Qualified" },
+  { value: "disqualified", label: "Disqualified" },
+];
 
 export function LeadDetailDrawer({
   lead,
@@ -60,107 +39,136 @@ export function LeadDetailDrawer({
   onClose,
   onUpdateStatus,
 }: LeadDetailDrawerProps) {
-  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
-  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
-  const [statusNotification, setStatusNotification] = useState<string | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [recordInfoOpen, setRecordInfoOpen] = useState(false);
-  const [closing, setClosing] = useState(false);
-
-  const drawerRef = useRef<HTMLElement>(null);
-  const triggerElementRef = useRef<HTMLElement | null>(null);
-
-  const handleClose = useCallback(() => {
-    if (closing) return;
-    setClosing(true);
-    setTimeout(() => {
-      onClose();
-    }, 220);
-  }, [closing, onClose]);
-
-  // Accessibility: store trigger focus, lock scroll, trap focus, and handle Escape
+  const [mounted, setMounted] = useState(false);
+  const [updating, setUpdating] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+  const drawer = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  const close = useCallback(() => closeRef.current(), []);
   useEffect(() => {
-    triggerElementRef.current = document.activeElement as HTMLElement | null;
-    const prevOverflow = document.body.style.overflow;
+    setMounted(true);
+    const trigger = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-
-    // Focus close button initially
-    const closeBtn = drawerRef.current?.querySelector<HTMLElement>("button[aria-label='Close details']");
-    closeBtn?.focus();
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        handleClose();
-      } else if (e.key === "Tab" && drawerRef.current) {
-        const focusable = drawerRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-        );
-        if (focusable.length === 0) return;
-        const first = focusable[0];
-        const last = focusable[focusable.length - 1];
-
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
+    const frame = requestAnimationFrame(() =>
+      drawer.current
+        ?.querySelector<HTMLButtonElement>('button[aria-label="Close details"]')
+        ?.focus(),
+    );
+    function keydown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const controls = Array.from(
+        drawer.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), a[href], input:not([disabled]), textarea:not([disabled]), summary, [tabindex="0"]',
+        ) || [],
+      ).filter((el) => el.getClientRects().length > 0);
+      const first = controls[0],
+        last = controls[controls.length - 1];
+      if (!first) {
+        event.preventDefault();
+        drawer.current?.focus();
+        return;
+      }
+      if (
+        event.shiftKey &&
+        (document.activeElement === first || !drawer.current?.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        last.focus();
+      } else if (
+        !event.shiftKey &&
+        (document.activeElement === last || !drawer.current?.contains(document.activeElement))
+      ) {
+        event.preventDefault();
+        first.focus();
       }
     }
-
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", keydown);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
-      document.body.style.overflow = prevOverflow;
-      triggerElementRef.current?.focus();
+      cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", keydown);
+      document.body.style.overflow = previousOverflow;
+      if (trigger?.isConnected) trigger.focus();
     };
-  }, [handleClose]);
-
-  async function handleSelectStatus(status: LeadStatus) {
-    setStatusMenuOpen(false);
-    if (status === lead.status) return;
-
-    setIsUpdatingStatus(true);
-    setStatusNotification(null);
+  }, [close]);
+  useEffect(() => {
+    setNotification(null);
+    setCopied(null);
+    drawer.current?.querySelector(".lead-library-drawer-body")?.scrollTo(0, 0);
+  }, [lead.id]);
+  async function changeStatus(value: LeadStatus) {
+    if (updating || value === lead.status || !onUpdateStatus) return;
+    setUpdating(true);
+    setNotification(null);
     try {
-      if (onUpdateStatus) {
-        await onUpdateStatus(status);
-      }
-      if (isPreview) {
-        setStatusNotification("Preview change only. Not persisted.");
-      }
-    } catch (err: unknown) {
-      setStatusNotification(
-        (err instanceof Error ? err.message : null) || "Failed to update status."
-      );
+      await onUpdateStatus(value);
+      if (isPreview) setNotification("Preview change only. Not persisted.");
+    } catch (error) {
+      setNotification(error instanceof Error ? error.message : "Could not update status.");
     } finally {
-      setIsUpdatingStatus(false);
+      setUpdating(false);
     }
   }
-
-  function copyToClipboard(text: string, fieldName: string) {
-    if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedField(fieldName);
-      setTimeout(() => setCopiedField(null), 2000);
-    });
+  async function copy(value: string, field: string) {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(field);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      setNotification("Copy failed. Select the contact value and copy it manually.");
+    }
   }
-
-  const displayName = lead.name || lead.email || lead.phone || "Unnamed lead";
-  const initials = getInitials(displayName);
-
-  // Extract website from captured fields or URL fields
-  const rawWebsite =
-    (lead.capturedFields?.website as string | undefined) ||
-    (lead.capturedFields?.url as string | undefined) ||
-    (lead.capturedFields?.domain as string | undefined) ||
-    null;
-  const websiteHostname = extractHostname(rawWebsite);
-
-  // Business details fields to exclude from generic list because shown elsewhere
-  const excludeFields = new Set([
+  const fields = Object.entries(lead.capturedFields || {});
+  const fieldValue = (aliases: string[]) =>
+    fields.find(
+      ([key, value]) =>
+        aliases.includes(normalizeKey(key)) && value !== null && String(value).trim() !== "",
+    )?.[1];
+  const name = lead.name || lead.email || lead.phone || "Unnamed lead";
+  const rawWebsite = fieldValue(["website", "url", "domain"]);
+  let website: string | null = null,
+    hostname: string | null = null;
+  if (rawWebsite) {
+    try {
+      const url = new URL(
+        /^https?:\/\//i.test(String(rawWebsite)) ? String(rawWebsite) : `https://${rawWebsite}`,
+      );
+      if (["https:", "http:"].includes(url.protocol)) {
+        website = url.href;
+        hostname = url.hostname.replace(/^www\./, "");
+      }
+    } catch {
+      /* Keep malformed source values out of clickable links. */
+    }
+  }
+  const category =
+    fieldValue(["category", "targetcategory"]) ||
+    lead.tags.find((tag) => normalizeKey(tag) !== "leadgeneration");
+  const rows: [string, string][] = [];
+  const shownLabels = new Set<string>();
+  const addRow = (label: string, value: unknown) => {
+    if (
+      value === undefined ||
+      value === null ||
+      String(value).trim() === "" ||
+      shownLabels.has(normalizeKey(label))
+    )
+      return;
+    shownLabels.add(normalizeKey(label));
+    rows.push([label, String(value)]);
+  };
+  addRow("Company", fieldValue(["company", "companyname"]) || lead.name);
+  addRow("Category", category ? formatLeadTag(String(category)) : null);
+  addRow("Location", fieldValue(["location", "city"]));
+  addRow("Product category", fieldValue(["productcategory"]));
+  const excluded = new Set([
     "website",
     "url",
     "domain",
@@ -168,467 +176,241 @@ export function LeadDetailDrawer({
     "phone",
     "name",
     "qualification",
+    "qualificationscore",
+    "qualificationmax",
+    "fitscore",
+    "score",
     "intent",
     "sentiment",
+    "company",
+    "companyname",
+    "category",
+    "targetcategory",
+    "location",
+    "city",
+    "productcategory",
+    "dataorigin",
   ]);
-
-  const rawCompany =
-    (lead.capturedFields?.company as string | undefined) ||
-    (lead.capturedFields?.company_name as string | undefined) ||
-    lead.name ||
-    null;
-  const rawCategory =
-    (lead.capturedFields?.category as string | undefined) ||
-    (lead.capturedFields?.target_category as string | undefined) ||
-    (lead.tags?.[0] ?? null);
-  const rawLocation =
-    (lead.capturedFields?.location as string | undefined) ||
-    (lead.capturedFields?.city as string | undefined) ||
-    null;
-  const rawProductCategory =
-    (lead.capturedFields?.product_category as string | undefined) || null;
-
-  // Other dynamic business fields
-  const extraFields = Object.entries(lead.capturedFields || {}).filter(
-    ([k, v]) => !excludeFields.has(k.toLowerCase()) && v !== undefined && v !== null
-  );
-
-  const score = lead.qualificationScore;
-  const max = lead.qualificationMax ?? 100;
-  const hasScore = score !== null && score !== undefined && !Number.isNaN(score);
-  const percentage = hasScore ? Math.min(100, Math.max(0, (score / max) * 100)) : 0;
-
-  return (
-    <>
-      {/* Light dimming backdrop (no blur, underlying table recognizable) */}
-      <div
-        className={`fixed inset-0 !m-0 !mt-0 z-40 bg-black/20 ${
-          closing ? "animate-backdrop-out" : "animate-backdrop-in"
-        }`}
-        onClick={handleClose}
-        aria-hidden="true"
-      />
-
-      {/* Slide-over Drawer anchored right: ~600-620px desktop, full width mobile */}
+  for (const [key, value] of fields) {
+    const label = lead.attributeLabels?.[key] || key.replace(/_/g, " ");
+    if (!excluded.has(normalizeKey(key)) && !excluded.has(normalizeKey(label)))
+      addRow(label, value);
+  }
+  if (!mounted) return null;
+  return createPortal(
+    <div
+      className="lead-library-overlay"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) close();
+      }}
+    >
       <aside
-        ref={drawerRef}
+        ref={drawer}
+        className="lead-console lead-library-drawer"
         role="dialog"
         aria-modal="true"
-        aria-label="Lead details"
-        className={`lead-console lead-record-drawer fixed inset-y-0 right-0 !m-0 !mt-0 z-50 flex w-full max-w-full sm:w-[560px] lg:w-[620px] flex-col border-l border-neutral-200 bg-white shadow-xl ${
-          closing ? "animate-drawer-out" : "animate-drawer-in"
-        }`}
+        aria-labelledby="lead-library-name"
+        tabIndex={-1}
       >
-        {/* Fixed Header: ~64px high */}
-        <div className="h-16 px-6 border-b border-neutral-200 bg-white flex items-center justify-between shrink-0">
-          <h3 className="text-lg font-bold text-neutral-900 tracking-tight">
-            Lead details
-          </h3>
-          <button
-            type="button"
-            onClick={handleClose}
-            className="p-1.5 text-neutral-400 hover:text-neutral-700 rounded-6 hover:bg-neutral-100 transition-colors focus:outline-none focus:ring-1 focus:ring-heat-100"
-            aria-label="Close details"
-          >
-            <X className="w-5 h-5" />
+        <header className="lead-library-drawer-header">
+          <span>Lead details</span>
+          <button type="button" onClick={close} aria-label="Close details">
+            <X size={19} />
           </button>
+        </header>
+        <div className="lead-library-identity">
+          <div className="lead-library-name">
+            <span className="lead-library-avatar">{getInitials(name)}</span>
+            <div>
+              <h2 id="lead-library-name">{name}</h2>
+              {hostname && (
+                <a href={website!} target="_blank" rel="noopener noreferrer">
+                  {hostname}
+                  <ExternalLink size={13} />
+                </a>
+              )}
+            </div>
+          </div>
+          <div className="lead-library-status">
+            <LeadSelect
+              label="Status"
+              value={lead.status}
+              options={statusOptions}
+              disabled={updating || !onUpdateStatus}
+              onChange={(value) => void changeStatus(value)}
+            />
+          </div>
         </div>
-
-        {/* Ephemeral status / outside filter notifications */}
-        {isOutsideFilter && (
-          <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 text-xs text-amber-800 shrink-0">
-            This lead is outside the currently applied search or filters.
-          </div>
-        )}
-        {statusNotification && (
-          <div className="bg-neutral-100 border-b border-neutral-200 px-6 py-2 text-xs text-neutral-700 flex items-center justify-between shrink-0">
-            <span>{statusNotification}</span>
-            <button
-              type="button"
-              onClick={() => setStatusNotification(null)}
-              className="text-neutral-400 hover:text-neutral-700 font-bold ml-2"
-            >
-              &times;
-            </button>
-          </div>
-        )}
-
-        {/* Independently scrolling body: padding ~24–28px */}
-        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
-          {/* Identity Section */}
-          <div className="space-y-4">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex items-center gap-3.5 min-w-0">
-                <div className="w-12 h-12 rounded-8 bg-neutral-100 text-neutral-800 font-bold text-base flex items-center justify-center shrink-0 border border-neutral-200/60 uppercase">
-                  {initials}
-                </div>
-                <div className="min-w-0">
-                  <h4 className="text-xl font-bold text-neutral-900 leading-snug truncate">
-                    {displayName}
-                  </h4>
-                  {websiteHostname && (
-                    <p className="text-xs text-neutral-500 font-normal truncate mt-0.5">
-                      {websiteHostname}
-                    </p>
+        <div className="lead-library-drawer-body">
+          {isOutsideFilter && (
+            <p className="lead-library-notice">This lead is outside the current filters.</p>
+          )}
+          {notification && (
+            <p role="status" className="lead-library-notice">
+              {notification}
+            </p>
+          )}
+          <section className="lead-library-section">
+            <h3>Contact details</h3>
+            <div className="lead-library-contact-list">
+              {(
+                [
+                  {
+                    label: "Email",
+                    value: lead.email,
+                    icon: Mail,
+                    href: lead.email && isValidEmail(lead.email) ? `mailto:${lead.email}` : null,
+                  },
+                  {
+                    label: "Phone",
+                    value: lead.phone,
+                    icon: Phone,
+                    href:
+                      lead.phone && isValidPhone(lead.phone)
+                        ? `tel:${lead.phone.replace(/[^0-9+]/g, "")}`
+                        : null,
+                  },
+                  {
+                    label: "Website",
+                    value: hostname || (rawWebsite ? String(rawWebsite) : null),
+                    icon: Globe,
+                    href: website,
+                  },
+                ] as const
+              ).map(({ label, value, icon: Icon, href }) => (
+                <div key={label} className="lead-library-contact">
+                  <Icon size={18} />
+                  <div>
+                    <span>{label}</span>
+                    {value ? (
+                      href ? (
+                        <a
+                          href={href}
+                          target={label === "Website" ? "_blank" : undefined}
+                          rel={label === "Website" ? "noopener noreferrer" : undefined}
+                        >
+                          {value}
+                          {label === "Website" && <ExternalLink size={13} />}
+                        </a>
+                      ) : (
+                        <p>{value}</p>
+                      )
+                    ) : (
+                      <p className="lead-library-missing">Not available</p>
+                    )}
+                  </div>
+                  {value && label !== "Website" && (
+                    <button
+                      type="button"
+                      aria-label={`Copy ${label.toLowerCase()}`}
+                      onClick={() => void copy(value, label)}
+                    >
+                      {copied === label ? <Check size={16} /> : <Copy size={16} />}
+                    </button>
                   )}
                 </div>
-              </div>
-
-              {/* Status Dropdown */}
-              <div className="relative shrink-0 text-right">
-                <span className="text-[11px] text-neutral-400 font-medium block mb-1">
-                  Status
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setStatusMenuOpen((prev) => !prev)}
-                  disabled={isUpdatingStatus}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-8 border border-neutral-200 bg-white hover:bg-neutral-50 text-xs font-semibold text-neutral-800 shadow-xs transition-colors"
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                      lead.status === "qualified"
-                        ? "bg-emerald-500"
-                        : lead.status === "contacted"
-                        ? "bg-blue-500"
-                        : "bg-neutral-400"
-                    }`}
-                  />
-                  <span className="capitalize">{lead.status}</span>
-                  <ChevronDown className="w-3.5 h-3.5 text-neutral-400" />
-                </button>
-
-                {statusMenuOpen && (
-                  <div className="absolute right-0 top-full mt-1.5 w-40 bg-white border border-neutral-200 rounded-8 shadow-lg py-1 z-30 animate-in fade-in zoom-in-95 duration-100">
-                    {STATUS_OPTIONS.map((opt) => {
-                      const isSelected = opt === lead.status;
-                      return (
-                        <button
-                          key={opt}
-                          type="button"
-                          onClick={() => handleSelectStatus(opt)}
-                          className={`w-full px-3 py-2 text-left text-xs capitalize flex items-center justify-between transition-colors ${
-                            isSelected
-                              ? "bg-orange-50 text-heat-100 font-semibold"
-                              : "text-neutral-700 hover:bg-neutral-100"
-                          }`}
-                        >
-                          <span className="flex items-center gap-2">
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                                opt === "qualified"
-                                  ? "bg-emerald-500"
-                                  : opt === "contacted"
-                                  ? "bg-blue-500"
-                                  : "bg-neutral-400"
-                              }`}
-                            />
-                            <span>{opt}</span>
-                          </span>
-                          {isSelected && <Check className="w-3.5 h-3.5 text-heat-100" />}
-                        </button>
-                      );
-                    })}
+              ))}
+            </div>
+          </section>
+          <section className="lead-library-section">
+            <div className="lead-library-section-title">
+              <h3>Fit score</h3>
+              <span>AI assessment</span>
+            </div>
+            <QualificationIndicator
+              score={lead.qualificationScore}
+              max={lead.qualificationMax}
+              className="lead-library-fit"
+            />
+            {(lead.intent || lead.sentiment !== "unknown") && (
+              <dl className="lead-library-facts">
+                {lead.intent && (
+                  <div>
+                    <dt>Intent</dt>
+                    <dd>{lead.intent}</dd>
                   </div>
                 )}
-              </div>
-            </div>
-
-            {/* Tags beneath identity */}
-            {lead.tags && lead.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {lead.tags.map((t) => (
-                  <span
-                    key={t}
-                    className="px-2.5 py-1 rounded-6 text-xs bg-neutral-100 text-neutral-700 border border-neutral-200/60 font-medium"
-                  >
-                    {formatLeadTag(t)}
-                  </span>
+                {lead.sentiment !== "unknown" && (
+                  <div>
+                    <dt>Sentiment</dt>
+                    <dd>{lead.sentiment}</dd>
+                  </div>
+                )}
+              </dl>
+            )}
+          </section>
+          <section className="lead-library-section">
+            <h3>Business details</h3>
+            {rows.length ? (
+              <dl className="lead-library-facts">
+                {rows.map(([label, value]) => (
+                  <div key={normalizeKey(label)}>
+                    <dt>{label}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : (
+              <p className="lead-library-missing">No business details captured.</p>
+            )}
+            {lead.tags.length > 0 && (
+              <div className="lead-library-tags" aria-label="Tags">
+                {lead.tags.map((tag) => (
+                  <span key={tag}>{formatLeadTag(tag)}</span>
                 ))}
               </div>
             )}
-          </div>
-
-          <div className="border-t border-neutral-200" />
-
-          {/* Section: Contact Information */}
-          <div className="space-y-3.5">
-            <h5 className="text-sm font-bold text-neutral-900">Contact information</h5>
-
-            <div className="space-y-3 text-xs">
-              {/* Email */}
-              <div className="flex items-center justify-between py-0.5">
-                <div className="flex items-center gap-2.5 text-neutral-500 w-28 shrink-0">
-                  <Mail className="w-4 h-4 text-neutral-400" />
-                  <span>Email</span>
-                </div>
-                <div className="flex items-center gap-2 min-w-0">
-                  {lead.email ? (
-                    <>
-                      {isValidEmail(lead.email) ? (
-                        <a
-                          href={`mailto:${lead.email}`}
-                          className="text-neutral-900 font-medium hover:text-heat-100 hover:underline truncate"
-                        >
-                          {lead.email}
-                        </a>
-                      ) : (
-                        <span className="text-neutral-900 font-medium truncate">{lead.email}</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(lead.email!, "email")}
-                        className="p-1 text-neutral-400 hover:text-neutral-700 rounded transition-colors"
-                        title="Copy email"
-                        aria-label="Copy email"
-                      >
-                        {copiedField === "email" ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                    </>
-                  ) : (
-                    <span className="text-neutral-400">Not available</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Phone */}
-              <div className="flex items-center justify-between py-0.5">
-                <div className="flex items-center gap-2.5 text-neutral-500 w-28 shrink-0">
-                  <Phone className="w-4 h-4 text-neutral-400" />
-                  <span>Phone</span>
-                </div>
-                <div className="flex items-center gap-2 min-w-0">
-                  {lead.phone ? (
-                    <>
-                      {isValidPhone(lead.phone) ? (
-                        <a
-                          href={`tel:${lead.phone.replace(/[^0-9+]/g, "")}`}
-                          className="text-neutral-900 font-medium hover:text-heat-100 hover:underline truncate font-sans"
-                        >
-                          {lead.phone}
-                        </a>
-                      ) : (
-                        <span className="text-neutral-900 font-medium truncate">{lead.phone}</span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => copyToClipboard(lead.phone!, "phone")}
-                        className="p-1 text-neutral-400 hover:text-neutral-700 rounded transition-colors"
-                        title="Copy phone"
-                        aria-label="Copy phone"
-                      >
-                        {copiedField === "phone" ? (
-                          <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        ) : (
-                          <Copy className="w-3.5 h-3.5" />
-                        )}
-                      </button>
-                    </>
-                  ) : (
-                    <span className="text-neutral-400">Not available</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Website */}
-              <div className="flex items-center justify-between py-0.5">
-                <div className="flex items-center gap-2.5 text-neutral-500 w-28 shrink-0">
-                  <Globe className="w-4 h-4 text-neutral-400" />
-                  <span>Website</span>
-                </div>
-                <div className="flex items-center gap-1.5 min-w-0">
-                  {rawWebsite ? (
-                    <a
-                      href={ensureAbsoluteUrl(rawWebsite)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-blue-600 font-medium hover:underline inline-flex items-center gap-1 truncate"
-                    >
-                      <span>{websiteHostname || rawWebsite}</span>
-                      <ExternalLink className="w-3.5 h-3.5 shrink-0" />
-                    </a>
-                  ) : (
-                    <span className="text-neutral-400">Not available</span>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-neutral-200" />
-
-          {/* Section: Business Details */}
-          <div className="space-y-3.5">
-            <h5 className="text-sm font-bold text-neutral-900">Business details</h5>
-
-            <div className="space-y-2.5 text-xs">
-              {rawCompany && (
-                <div className="flex items-start justify-between py-0.5">
-                  <span className="text-neutral-500 w-32 shrink-0">Company</span>
-                  <span className="text-neutral-900 font-medium text-right flex-1 break-words">
-                    {rawCompany}
-                  </span>
-                </div>
-              )}
-              {rawCategory && (
-                <div className="flex items-start justify-between py-0.5">
-                  <span className="text-neutral-500 w-32 shrink-0">Category</span>
-                  <span className="text-neutral-900 font-medium text-right flex-1 break-words">
-                    {rawCategory}
-                  </span>
-                </div>
-              )}
-              {rawLocation && (
-                <div className="flex items-start justify-between py-0.5">
-                  <span className="text-neutral-500 w-32 shrink-0">Location</span>
-                  <span className="text-neutral-900 font-medium text-right flex-1 break-words">
-                    {rawLocation}
-                  </span>
-                </div>
-              )}
-              {rawProductCategory && (
-                <div className="flex items-start justify-between py-0.5">
-                  <span className="text-neutral-500 w-32 shrink-0">Product category</span>
-                  <span className="text-neutral-900 font-medium text-right flex-1 break-words">
-                    {rawProductCategory}
-                  </span>
-                </div>
-              )}
-
-              {/* Extra dynamic fields */}
-              {extraFields.map(([k, v]) => {
-                const label = lead.attributeLabels?.[k] ?? k.replace(/_/g, " ");
-                return (
-                  <div key={k} className="flex items-start justify-between py-0.5">
-                    <span className="text-neutral-500 w-32 shrink-0 capitalize">{label}</span>
-                    <span className="text-neutral-900 font-medium text-right flex-1 break-words">
-                      {String(v)}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="border-t border-neutral-200" />
-
-          {/* Section: Qualification */}
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5 text-sm font-bold text-neutral-900">
-                <span>Qualification</span>
-                <Info className="w-3.5 h-3.5 text-neutral-400" />
-              </div>
-              <div className="text-sm font-bold text-neutral-900 tabular-nums">
-                {hasScore ? (
-                  <>
-                    <span>{score}</span>
-                    <span className="text-neutral-400 font-normal"> / {max}</span>
-                  </>
-                ) : (
-                  <span className="text-neutral-400 font-normal">Not scored</span>
-                )}
-              </div>
-            </div>
-
-            {/* Orange progress bar */}
-            {hasScore && (
-              <div className="space-y-1">
-                <div className="w-full h-2 rounded-full bg-neutral-200 overflow-hidden">
-                  <div
-                    className="h-full bg-heat-100 rounded-full transition-all duration-300"
-                    style={{ width: `${percentage}%` }}
-                  />
-                </div>
-                <p className="text-[11px] text-neutral-400">AI fit assessment</p>
-              </div>
-            )}
-
-            <div className="space-y-2 pt-2 text-xs">
-              <div className="flex items-start justify-between py-0.5">
-                <span className="text-neutral-500 w-28 shrink-0">Intent</span>
-                <span className="text-neutral-900 font-medium text-right flex-1">
-                  {lead.intent || "Not captured"}
-                </span>
-              </div>
-              <div className="flex items-start justify-between py-0.5">
-                <span className="text-neutral-500 w-28 shrink-0">Sentiment</span>
-                <span className="text-neutral-900 font-medium text-right flex-1 capitalize">
-                  {lead.sentiment && lead.sentiment !== "unknown"
-                    ? lead.sentiment
-                    : "Not assessed"}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t border-neutral-200" />
-
-          {/* Section: Conversation */}
-          <div className="space-y-3">
-            <h5 className="text-sm font-bold text-neutral-900">Conversation</h5>
-            {lead.originatingConversationId ? (
+          </section>
+          {lead.originatingConversationId ? (
+            <section className="lead-library-section">
+              <h3>Conversation</h3>
               <LeadConversationTranscript
                 conversationId={lead.originatingConversationId}
                 workspaceId={workspaceId}
                 status={lead.transcriptStatus}
                 messages={lead.transcriptMessages}
               />
-            ) : (
-              <div className="flex items-center gap-2 text-xs text-neutral-400 py-1">
-                <MessageSquare className="w-4 h-4 text-neutral-400 shrink-0" />
-                <span>No linked conversation</span>
-              </div>
-            )}
-          </div>
-
-          <div className="border-t border-neutral-200" />
-
-          {/* Section: Record information (collapsible disclosure) */}
-          <div className="space-y-2">
-            <button
-              type="button"
-              onClick={() => setRecordInfoOpen((prev) => !prev)}
-              className="w-full flex items-center justify-between text-left py-1 text-neutral-900 font-bold text-sm focus:outline-none"
-            >
-              <span>Record information</span>
-              {recordInfoOpen ? (
-                <ChevronDown className="w-4 h-4 text-neutral-400" />
-              ) : (
-                <ChevronRight className="w-4 h-4 text-neutral-400" />
-              )}
-            </button>
-            <p className="text-xs text-neutral-500">
-              {formatFullUtcCaptured(lead.capturedAt)}
+            </section>
+          ) : (
+            <p className="lead-library-empty-conversation">
+              <MessageSquare size={16} />
+              No linked conversation
             </p>
-
-            {recordInfoOpen && (
-              <div className="mt-3 p-3 rounded-8 bg-neutral-50 border border-neutral-200/80 space-y-2 text-xs font-mono animate-in fade-in duration-100">
-                <div className="flex items-start justify-between gap-2">
-                  <span className="text-neutral-500 font-sans">Lead ID:</span>
-                  <span className="text-neutral-800 break-all">{lead.id}</span>
-                </div>
-                {lead.source && (
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-neutral-500 font-sans">Source:</span>
-                    <span className="text-neutral-800">{lead.source}</span>
-                  </div>
-                )}
-                {lead.version !== undefined && (
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="text-neutral-500 font-sans">Version:</span>
-                    <span className="text-neutral-800">{lead.version}</span>
-                  </div>
-                )}
+          )}
+          <details className="lead-library-record">
+            <summary>Record information</summary>
+            <dl className="lead-library-facts">
+              <div>
+                <dt>Captured</dt>
+                <dd>{formatFullUtcCaptured(lead.capturedAt)}</dd>
               </div>
-            )}
-          </div>
+              <div>
+                <dt>Lead ID</dt>
+                <dd>{lead.id}</dd>
+              </div>
+              {lead.source && (
+                <div>
+                  <dt>Source</dt>
+                  <dd>{lead.source}</dd>
+                </div>
+              )}
+              {fieldValue(["dataorigin"]) && (
+                <div>
+                  <dt>Data origin</dt>
+                  <dd>{String(fieldValue(["dataorigin"]))}</dd>
+                </div>
+              )}
+              {lead.version !== undefined && (
+                <div>
+                  <dt>Version</dt>
+                  <dd>{lead.version}</dd>
+                </div>
+              )}
+            </dl>
+          </details>
         </div>
       </aside>
-    </>
+    </div>,
+    document.body,
   );
 }

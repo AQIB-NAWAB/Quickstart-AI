@@ -73,6 +73,16 @@ function defaultProfiles(openRouterKey?: string): ProviderProfileConfig[] {
     });
   }
 
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    profiles.push({
+      id: "gemini",
+      driver: "openai_compatible",
+      baseUrl: process.env.GEMINI_BASE_URL ?? "https://generativelanguage.googleapis.com/v1beta/openai",
+      apiKey: geminiKey,
+    });
+  }
+
   const groqKey = process.env.GROQ_API_KEY;
   if (groqKey) {
     profiles.push({

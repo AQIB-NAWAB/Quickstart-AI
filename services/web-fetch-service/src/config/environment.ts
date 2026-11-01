@@ -1,4 +1,4 @@
-export type AcquisitionDriverKind = "fake" | "direct_http" | "olostep" | "firecrawl";
+export type AcquisitionDriverKind = "fake" | "direct_http" | "olostep" | "firecrawl" | "apify";
 
 export type AcquisitionProviderProfileConfig = {
   id: string;
@@ -121,9 +121,22 @@ function mergeKeyedProviders(
   profiles: AcquisitionProviderProfileConfig[],
   olostepKey?: string,
   firecrawlKey?: string,
+  apifyKey?: string,
 ): AcquisitionProviderProfileConfig[] {
   const out = [...profiles];
   const has = (driver: string) => out.some((p) => p.driver === driver && p.enabled !== false);
+  if (olostepKey && !has("olostep")) {
+    out.push({
+      id: "olostep",
+      driver: "olostep",
+      enabled: true,
+      priority: 5,
+      unitCostMicrosScrape: 500,
+      unitCostMicrosSearch: 800,
+      apiKey: olostepKey,
+      baseUrl: process.env.OLOSTEP_BASE_URL ?? "https://api.olostep.com",
+    });
+  }
   if (firecrawlKey && !has("firecrawl")) {
     out.push({
       id: "firecrawl",
@@ -136,22 +149,23 @@ function mergeKeyedProviders(
       baseUrl: process.env.FIRECRAWL_BASE_URL ?? "https://api.firecrawl.dev",
     });
   }
-  if (olostepKey && !has("olostep")) {
+  if (apifyKey && !has("apify")) {
     out.push({
-      id: "olostep",
-      driver: "olostep",
+      id: "apify",
+      driver: "apify",
       enabled: true,
-      priority: 20,
+      priority: 90,
       unitCostMicrosScrape: 500,
-      unitCostMicrosSearch: 800,
-      apiKey: olostepKey,
-      baseUrl: process.env.OLOSTEP_BASE_URL ?? "https://api.olostep.com",
+      unitCostMicrosSearch: 0,
+      apiKey: apifyKey,
+      baseUrl: process.env.APIFY_BASE_URL ?? "https://api.apify.com",
     });
   }
   return out;
 }
 
 export function loadWebFetchConfig(): WebFetchConfig {
+  const apifyApiKey = process.env.APIFY_TOKEN ?? process.env.APIFY_API_KEY;
   const olostepApiKey = process.env.OLOSTEP_API_KEY;
   const firecrawlApiKey = process.env.FIRECRAWL_API_KEY;
   const fromJson = loadProfilesFromJson();
@@ -159,6 +173,7 @@ export function loadWebFetchConfig(): WebFetchConfig {
     fromJson ?? defaultProfiles(olostepApiKey, firecrawlApiKey),
     olostepApiKey,
     firecrawlApiKey,
+    apifyApiKey,
   );
   const internalToken = requireToken();
 

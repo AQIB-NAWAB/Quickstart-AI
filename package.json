@@ -25,6 +25,7 @@
     "widget:real-llm": "node --env-file=.env scripts/configure-demo-agent-real-llm.mjs",
     "voice:inbound-proof": "node scripts/check-voice-inbound-numbers-proof.mjs",
     "start:agent-inbox": "bash scripts/start-agent-inbox.sh",
+    "start:leads-campaigns": "bash scripts/start-leads-campaigns.sh",
     "stop:agent-inbox": "bash scripts/stop-agent-inbox.sh",
     "start:workspaces": "bash scripts/start-workspaces.sh",
     "clinic:portal": "node fixtures/dental-clinic-portal/server.mjs"

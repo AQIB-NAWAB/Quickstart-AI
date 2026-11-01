@@ -1,6 +1,8 @@
 "use client";
 
 import { Columns3, Search, X } from "lucide-react";
+import { LeadSelect } from "@/features/lead-generation/components/lead-select";
+import { formatLeadTag } from "../lib/format";
 import { useEffect, useRef, useState } from "react";
 
 export type VisibleColumns = {
@@ -77,12 +79,12 @@ export function LeadFilters({
     };
   }, [columnsOpen]);
 
-  const hasActiveFilters = search.trim() !== "" || tag !== "all";
+  const hasActiveFilters = search.trim() !== "" || tag !== "all" || status !== "all";
 
   return (
     <div className="space-y-4">
       {/* 1. Status Strip */}
-      <div className="flex items-center gap-6 border-b border-neutral-200 overflow-x-auto text-xs no-scrollbar">
+      <div className="leads-status-tabs" aria-label="Lead status">
         {STATUS_TABS.map((tab) => {
           const isActive = status === tab.id;
           const count = statusCounts[tab.id as keyof typeof statusCounts] ?? 0;
@@ -92,6 +94,7 @@ export function LeadFilters({
               key={tab.id}
               type="button"
               onClick={() => onStatusChange(tab.id)}
+              aria-pressed={isActive}
               className={`pb-3 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors border-b-2 font-medium ${
                 isActive
                   ? "border-heat-100 text-heat-100 font-semibold -mb-[1px]"
@@ -121,26 +124,23 @@ export function LeadFilters({
               type="text"
               value={search}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search leads..."
+              aria-label="Search name, email or phone"
+              placeholder="Search name, email or phone…"
               className="w-full h-11 pl-10 pr-3 border border-neutral-300 rounded-8 bg-white focus:outline-none focus:border-heat-100 focus:ring-1 focus:ring-heat-100 text-neutral-800 placeholder:text-neutral-400 transition-colors"
             />
           </div>
 
           {/* Tags Dropdown selector */}
           <div className="flex items-center">
-            <select
+            <LeadSelect
+              label="Tags"
               value={tag}
-              onChange={(e) => onTagChange(e.target.value)}
-              className="h-11 px-3 border border-neutral-300 rounded-8 bg-white text-neutral-700 focus:outline-none focus:border-heat-100 focus:ring-1 focus:ring-heat-100 transition-colors font-medium cursor-pointer"
-              aria-label="Filter by tag"
-            >
-              <option value="all">Tags</option>
-              {availableTags.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
+              onChange={onTagChange}
+              options={[
+                { value: "all", label: "All tags" },
+                ...availableTags.map((value) => ({ value, label: formatLeadTag(value) })),
+              ]}
+            />
           </div>
 
           {/* Clear Filters Button */}
@@ -194,7 +194,7 @@ export function LeadFilters({
                     onChange={() => onToggleColumn("qualification")}
                     className="rounded text-heat-100 focus:ring-heat-100 cursor-pointer"
                   />
-                  <span>Qualification</span>
+                  <span>Fit score</span>
                 </label>
 
                 <label className="flex items-center gap-2 text-neutral-700 cursor-pointer hover:text-neutral-900">
@@ -224,7 +224,7 @@ export function LeadFilters({
                     onChange={() => onToggleColumn("captured")}
                     className="rounded text-heat-100 focus:ring-heat-100 cursor-pointer"
                   />
-                  <span>Captured</span>
+                  <span>Added</span>
                 </label>
 
                 <div className="pt-1 border-t border-neutral-100" />

@@ -1,3 +1,4 @@
+import { refreshSingleFlight } from "@/lib/server/auth/refresh-single-flight";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { COOKIE_REFRESH } from "@/lib/server/auth/constants";
@@ -16,14 +17,14 @@ export async function POST() {
     return res;
   }
 
-  const refreshed = await gatewayFetch<TokenPair>("/v1/refresh", {
+  const refreshed = await refreshSingleFlight(refreshToken, () => gatewayFetch<TokenPair>("/v1/refresh", {
     method: "POST",
     body: JSON.stringify({ refresh_token: refreshToken }),
-  });
+  }));
 
   if (!refreshed.ok) {
     const res = NextResponse.json({ error: refreshed.error }, { status: refreshed.status || 401 });
-    clearTokenCookies(res);
+    if (refreshed.status === 401) clearTokenCookies(res);
     return res;
   }
 

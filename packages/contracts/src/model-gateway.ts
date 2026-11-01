@@ -55,6 +55,7 @@ export type CompletionRequestBody = {
   tools?: ModelToolDefinition[];
   temperature?: number;
   max_tokens?: number;
+response_format?: { type: "json_object" };
   /** Reasoning effort for models that support it. */
   reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
   /** Output verbosity for Responses-compatible models. */

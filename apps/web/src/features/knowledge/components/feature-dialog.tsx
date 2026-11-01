@@ -13,7 +13,7 @@ interface FeatureDialogProps {
   roundedClass?: string;
   backdropClass?: string;
   isSubmitting?: boolean;
-  layout?: "default" | "lead-wizard";
+  layout?: "default" | "lead-wizard" | "settings";
   bodyClassName?: string;
 }
 
@@ -48,8 +48,8 @@ export function FeatureDialog({
     const elements = () =>
       Array.from(
         dialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]'
-        ) ?? []
+          'button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]',
+        ) ?? [],
       ).filter((element) => element.getClientRects().length > 0);
     const frame = requestAnimationFrame(() => (elements()[0] ?? dialogRef.current)?.focus());
     function handleKeyDown(event: KeyboardEvent) {
@@ -107,7 +107,7 @@ export function FeatureDialog({
         aria-labelledby={titleId}
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
-        className={`w-full ${maxWidthClass} console-feature ${layout === "lead-wizard" ? "lead-console lead-wizard-dialog" : ""} bg-white ${roundedClass} border border-border-faint shadow-sm flex flex-col max-h-[calc(100dvh-32px)] overflow-hidden focus:outline-none`}
+        className={`w-full ${maxWidthClass} console-feature ${layout === "lead-wizard" ? "lead-console lead-wizard-dialog" : layout === "settings" ? "settings-dialog" : ""} bg-white ${roundedClass} border border-border-faint shadow-sm flex flex-col max-h-[calc(100dvh-32px)] overflow-hidden focus:outline-none`}
       >
         {/* Header */}
         <div className="px-6 py-4 border-b border-border-faint flex items-center justify-between shrink-0">
@@ -136,7 +136,7 @@ export function FeatureDialog({
         <div
           className={
             bodyClassName ??
-            (layout === "lead-wizard"
+            (layout !== "default"
               ? "lead-wizard-host flex min-h-0 flex-col"
               : "px-6 py-5 overflow-y-auto min-h-0")
           }

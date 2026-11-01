@@ -486,6 +486,14 @@ const CATALOG_DEFINITIONS: Omit<IntegrationCatalogItem, "status">[] = [
     description: "Sync contacts and campaigns.",
     connectionType: "oauth",
   },
+  {
+    id: "apify",
+    name: "Apify",
+    category: "crm_leads",
+    categoryLabel: "CRM & Leads",
+    description: "Scrape Google Maps, business directories, and web sources directly into your lead pipeline.",
+    connectionType: "credentials",
+  },
 ];
 
 export class IntegrationsService {

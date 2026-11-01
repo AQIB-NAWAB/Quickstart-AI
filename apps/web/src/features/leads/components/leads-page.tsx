@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, Download } from "lucide-react";
+import { ArrowRight, Download, ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { filterLeads } from "../lib/filters";
@@ -11,6 +11,7 @@ import { CsvExportDialog } from "./csv-export-dialog";
 import { LeadDetailDrawer } from "./lead-detail-drawer";
 import { LeadFilters, type VisibleColumns } from "./lead-filters";
 import { LeadTable } from "./lead-table";
+import { LeadSelect } from "@/features/lead-generation/components/lead-select";
 
 interface LeadsPageProps {
   workspaceId: string;
@@ -47,6 +48,8 @@ export function LeadsPage({
   const [isUnavailable, setIsUnavailable] = useState(false);
   const [loading, setLoading] = useState(true);
   const [exportOpen, setExportOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState("7");
 
   // Column visibility state
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>({
@@ -175,6 +178,11 @@ export function LeadsPage({
     return filterLeads(allLeads, { q, status, tag });
   }, [allLeads, q, status, tag]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / Number(pageSize)));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * Number(pageSize);
+  const paginatedLeads = filteredLeads.slice(pageStart, pageStart + Number(pageSize));
+
   // Dynamic counts for status tabs from unfiltered dataset
   const statusCounts = useMemo(() => {
     return {
@@ -200,13 +208,16 @@ export function LeadsPage({
       workspaceId,
       selectedLeadId,
       newStatus,
-      selectedLeadDetail?.version
+      selectedLeadDetail?.version,
     );
 
+    if (res.status !== "ready") {
+      throw new Error(res.message);
+    }
     if (res.status === "ready") {
       setSelectedLeadDetail(res.data);
       setAllLeads((prev) =>
-        prev.map((l) => (l.id === selectedLeadId ? { ...l, status: newStatus } : l))
+        prev.map((l) => (l.id === selectedLeadId ? { ...l, status: newStatus } : l)),
       );
     }
   }
@@ -214,27 +225,32 @@ export function LeadsPage({
   // Filter change handlers
   function handleSearchChange(newQ: string) {
     setQ(newQ);
+    setPage(1);
     updateUrl({ q: newQ });
   }
 
   function handleStatusChange(newStatus: string) {
     setStatus(newStatus);
+    setPage(1);
     updateUrl({ status: newStatus });
   }
 
   function handleTagChange(newTag: string) {
     setTag(newTag);
+    setPage(1);
     updateUrl({ tag: newTag });
   }
 
   function handleClearFilters() {
     setQ("");
+    setPage(1);
     setStatus("all");
     setTag("all");
     updateUrl({ q: "", status: "all", tag: "all" });
   }
 
   function handleSelectLead(leadId: string) {
+    setSelectedLeadDetail(null);
     setSelectedLeadId(leadId);
     updateUrl({ lead: leadId });
   }
@@ -279,40 +295,35 @@ export function LeadsPage({
   }
 
   return (
-    <div className="lead-console lead-list space-y-5">
-      {/* Page Header (Exact reproduction of 1.png) */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-baseline gap-2.5">
-          <h1 className="text-3xl font-bold text-neutral-900 tracking-tight">Leads</h1>
-          <span className="text-base font-normal text-neutral-400 tabular-nums">
-            {allLeads.length}
-          </span>
-          {isSampleData && (
-            <span className="border border-orange-200 bg-orange-50/50 text-heat-100 text-[10px] font-semibold px-2 py-0.5 rounded-full ml-1">
-              Sample data
-            </span>
-          )}
+    <div className="lead-console lead-list leads-redesign space-y-5">
+      <header className="leads-heading">
+        <div>
+          <div className="leads-title">
+            <h1>Leads</h1>
+            <span>{allLeads.length}</span>
+            {isSampleData && <span className="leads-sample">Sample data</span>}
+          </div>
+          <p>Review, organize and follow up with your leads.</p>
         </div>
-
-        <div className="flex items-center gap-3 shrink-0 self-start sm:self-auto">
+        <div className="leads-header-actions">
           <button
             type="button"
+            className="settings-button"
+            disabled={loading}
             onClick={() => setExportOpen(true)}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-8 text-xs font-semibold border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-800 shadow-xs transition-colors"
           >
-            <Download className="w-3.5 h-3.5 text-neutral-600" />
-            <span>Export CSV</span>
+            <Download size={17} />
+            Export CSV
           </button>
-
           <Link
+            className="settings-button primary"
             href={`/workspaces/${workspaceId}/lead-generation/runs`}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-heat-100 hover:text-orange-600 transition-colors py-2"
           >
-            <span>Lead generation</span>
-            <ArrowRight className="w-3.5 h-3.5" />
+            Lead generation
+            <ArrowRight size={17} />
           </Link>
         </div>
-      </div>
+      </header>
 
       {loading && (
         <p role="status" className="text-xs text-neutral-500">
@@ -338,13 +349,72 @@ export function LeadsPage({
       {/* Main Table */}
       <div className="w-full">
         <LeadTable
-          leads={filteredLeads}
+          leads={paginatedLeads}
           selectedLeadId={selectedLeadId}
           visibleColumns={visibleColumns}
           isSampleData={isSampleData}
           onSelectLead={handleSelectLead}
         />
       </div>
+
+      <footer className="leads-pagination">
+        <p role="status">
+          {filteredLeads.length
+            ? `Showing ${pageStart + 1}–${pageStart + paginatedLeads.length} of ${filteredLeads.length} ${isSampleData ? "sample leads" : "leads"}`
+            : "0 leads"}
+        </p>
+        <div>
+          <LeadSelect
+            label="Rows"
+            value={pageSize}
+            onChange={(value) => {
+              setPageSize(value);
+              setPage(1);
+            }}
+            options={[
+              { value: "7", label: "7 per page" },
+              { value: "15", label: "15 per page" },
+              { value: "25", label: "25 per page" },
+            ]}
+          />
+          <nav aria-label="Lead pages">
+            <button
+              type="button"
+              aria-label="Previous page"
+              disabled={currentPage === 1}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              <ChevronLeft size={17} />
+            </button>
+            {Array.from(
+              { length: Math.min(5, totalPages) },
+              (_, i) => Math.min(Math.max(1, currentPage - 2), Math.max(1, totalPages - 4)) + i,
+            ).map((number) => (
+              <button
+                type="button"
+                key={number}
+                aria-current={currentPage === number ? "page" : undefined}
+                aria-label={`Page ${number}`}
+                onClick={() => setPage(number)}
+              >
+                {number}
+              </button>
+            ))}
+            <button
+              type="button"
+              aria-label="Next page"
+              disabled={currentPage === totalPages}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              <ChevronRight size={17} />
+            </button>
+          </nav>
+        </div>
+      </footer>
+      <p className="leads-score-note">
+        <Info size={13} />
+        Fit scores are AI assessments
+      </p>
 
       {/* Slide-over Detail Drawer */}
       {selectedLeadDetail && (

@@ -24,7 +24,7 @@ export class SecretsService {
   async create(
     workspaceId: string,
     input: SecretCreateInput,
-    audit?: { actorUserId: string; requestId: string },
+    audit?: { actorUserId: string; requestId: string; serviceActor?: boolean },
   ): Promise<SecretSummaryRow> {
     this.validateName(input.name);
     this.validateValue(input.value);
@@ -47,7 +47,7 @@ export class SecretsService {
     name: string,
     newEncryptionKey: string,
     newKeyVersion: number,
-    audit?: { actorUserId: string; requestId: string },
+    audit?: { actorUserId: string; requestId: string; serviceActor?: boolean },
   ): Promise<SecretSummaryRow> {
     const row = await this.repo.getByName(workspaceId, name);
     if (!row) {
@@ -86,7 +86,7 @@ export class SecretsService {
   async delete(
     workspaceId: string,
     name: string,
-    audit?: { actorUserId: string; requestId: string },
+    audit?: { actorUserId: string; requestId: string; serviceActor?: boolean },
   ): Promise<void> {
     const deleted = await this.repo.deleteByName(workspaceId, name, audit);
     if (!deleted) {
