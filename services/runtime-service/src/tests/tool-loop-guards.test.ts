@@ -36,6 +36,7 @@ function loopWith(
   rounds: Round[],
   executed: Array<{ name: string; args: Record<string, unknown> }>,
   visitorText = "check post 5 and post 6",
+  tool: AgentToolDefinition = HTTP_TOOL,
 ) {
   const modelClient = {
     async complete(body: CompletionRequestBody): Promise<CompletionResponseBody> {
@@ -81,12 +82,13 @@ function loopWith(
   const loop = new ToolLoop(modelClient, toolCallsClient, executor);
   return loop.run({
     workspaceId: "ws-1",
+    agentId: "agent-1",
     conversationId: "conv-1",
     requestId: "req-1",
     turnIdempotencyKey: "turn-1",
     authHeaders: {},
     model: { profile: "fake", model_id: "fake:model" },
-    tools: [HTTP_TOOL],
+    tools: [tool],
     chatMessages: [{ role: "user", content: visitorText }],
     visitorText,
   });
@@ -152,4 +154,60 @@ test("tool loop executes calls with different arguments", async () => {
     executed.map((e) => e.args.post_id),
     ["5", "6"],
   );
+});
+
+test("tool policy can disable a tool before execution", async () => {
+  const executed: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const result = await loopWith(
+    [
+      { finish: "tool_calls", calls: [{ id: "tc-1", name: "get_posts", arguments: { post_id: "5" } }] },
+      { finish: "stop", content: "I cannot run that action." },
+    ],
+    executed,
+    "check post 5",
+    { ...HTTP_TOOL, policy: { enabled: false } },
+  );
+  assert.equal(executed.length, 0);
+  assert.match(result.chatMessages.find((m) => m.role === "tool")?.content ?? "", /disabled/);
+});
+
+test("tool policy enforces channel allowlists and per-turn limits", async () => {
+  const executed: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const result = await loopWith(
+    [
+      {
+        finish: "tool_calls",
+        calls: [
+          { id: "tc-1", name: "get_posts", arguments: { post_id: "5" } },
+          { id: "tc-2", name: "get_posts", arguments: { post_id: "6" } },
+        ],
+      },
+      { finish: "stop", content: "Done." },
+    ],
+    executed,
+    "check post 5 and post 6",
+    { ...HTTP_TOOL, policy: { allowed_channels: ["voice"], max_calls_per_turn: 1 } },
+  );
+  assert.equal(executed.length, 0);
+  assert.match(result.chatMessages.filter((m) => m.role === "tool")[0]?.content ?? "", /channel/);
+});
+
+test("tool policy caps different calls to the configured per-turn limit", async () => {
+  const executed: Array<{ name: string; args: Record<string, unknown> }> = [];
+  await loopWith(
+    [
+      {
+        finish: "tool_calls",
+        calls: [
+          { id: "tc-1", name: "get_posts", arguments: { post_id: "5" } },
+          { id: "tc-2", name: "get_posts", arguments: { post_id: "6" } },
+        ],
+      },
+      { finish: "stop", content: "Done." },
+    ],
+    executed,
+    "check post 5 and post 6",
+    { ...HTTP_TOOL, policy: { max_calls_per_turn: 1 } },
+  );
+  assert.equal(executed.length, 1);
 });

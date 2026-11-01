@@ -40,9 +40,7 @@ export function RunHistory({
   const [isStartEvalOpen, setIsStartEvalOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const basePath = isPreview
-    ? "/preview/eval"
-    : `/workspaces/${workspaceId}/eval`;
+  const basePath = isPreview ? "/preview/eval" : `/workspaces/${workspaceId}/eval`;
 
   // Live polling: every 3s if any run is running or queued
   const hasActiveRun = runs.some((r) => r.status === "queued" || r.status === "running");
@@ -187,9 +185,7 @@ export function RunHistory({
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-xl font-bold tracking-tight text-[#18181B]">
-                  Evaluation Runs
-                </h1>
+                <h1 className="text-xl font-bold tracking-tight text-[#18181B]">Evaluation Runs</h1>
                 {hasActiveRun && (
                   <span className="flex items-center gap-1 rounded-full bg-[#FF571A]/10 px-2 py-0.5 text-[11px] font-semibold text-[#FF571A]">
                     <span className="h-1.5 w-1.5 rounded-full bg-[#FF571A] animate-ping" />
@@ -209,7 +205,9 @@ export function RunHistory({
                 disabled={isRefreshing}
                 className="flex items-center gap-1.5 rounded-lg border border-[#EAECF0] bg-white px-3 py-2 text-xs font-semibold text-[#18181B] hover:bg-[#F8F9FB] transition-colors disabled:opacity-50"
               >
-                <RefreshCw className={`h-3.5 w-3.5 text-[#71717A] ${isRefreshing ? "animate-spin" : ""}`} />
+                <RefreshCw
+                  className={`h-3.5 w-3.5 text-[#71717A] ${isRefreshing ? "animate-spin" : ""}`}
+                />
                 <span>Refresh</span>
               </button>
 
@@ -278,7 +276,8 @@ export function RunHistory({
               {filteredRuns.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="px-5 py-8 text-center text-xs text-[#71717A]">
-                    No evaluation runs recorded yet. Click "Start Evaluation" to trigger your first run.
+                    No evaluation runs recorded yet. Click "Start Evaluation" to trigger your first
+                    run.
                   </td>
                 </tr>
               ) : (
@@ -298,7 +297,8 @@ export function RunHistory({
                           <span className="text-[11px] text-[#71717A]">
                             {r.agentName || "Agent"} ·{" "}
                             <span className="font-semibold text-[#18181B]">
-                              {r.displayVersion || (r.agentVersionId ? `v${r.agentVersionId.slice(0, 4)}` : "v1.0")}
+                              {r.displayVersion ||
+                                (r.agentVersionId ? `v${r.agentVersionId.slice(0, 4)}` : "v1.0")}
                             </span>
                           </span>
                         </div>
@@ -321,22 +321,18 @@ export function RunHistory({
                         {r.policy?.method === "exact_match"
                           ? "exact_match"
                           : r.policy?.method === "semantic_similarity"
-                          ? `semantic (${(r.policy.config?.threshold as number) ?? 0.85})`
-                          : "tool_trace"}
+                            ? `semantic (${(r.policy.config?.threshold as number) ?? 0.85})`
+                            : "tool_trace"}
                       </td>
 
                       {/* Status */}
-                      <td className="px-5 py-3.5">
-                        {getStatusBadge(r.status)}
-                      </td>
+                      <td className="px-5 py-3.5">{getStatusBadge(r.status)}</td>
 
                       {/* Pass Rate & Progress Bar */}
                       <td className="px-5 py-3.5 min-w-[140px]">
                         <div className="space-y-1">
                           <div className="flex items-center justify-between text-[11px] font-mono">
-                            <span className="font-bold text-[#18181B]">
-                              {passPct.toFixed(1)}%
-                            </span>
+                            <span className="font-bold text-[#18181B]">{passPct.toFixed(1)}%</span>
                             <span className="text-[#71717A]">
                               {r.passedCount}/{r.caseCount}
                             </span>
@@ -399,6 +395,8 @@ export function RunHistory({
         onClose={() => setIsStartEvalOpen(false)}
         workspaceId={workspaceId}
         datasets={datasets}
+        defaultAgentId={agentId}
+        isPreview={isPreview}
         onRunCreated={(newRun) => {
           setRuns((prev) => [newRun, ...prev]);
         }}

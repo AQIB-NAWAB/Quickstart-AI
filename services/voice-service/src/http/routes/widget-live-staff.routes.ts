@@ -12,6 +12,10 @@ export const createWidgetLiveStaffRoutes: RouteModule<VoiceHttpContext> = (ctx) 
     workspaceAccess,
     WORKSPACE_PERMISSIONS.CONVERSATION_HANDOFF,
   );
+  const manageCalls = requireWorkspacePermission(
+    workspaceAccess,
+    WORKSPACE_PERMISSIONS.VOICE_CALLS_MANAGE,
+  );
 
   router.get(
     "/v1/workspaces/:workspaceId/voice/widget-live",
@@ -36,6 +40,12 @@ export const createWidgetLiveStaffRoutes: RouteModule<VoiceHttpContext> = (ctx) 
     ...tenant,
     handoff,
     asyncHandler(widgetVoiceLiveCtrl.staffLeave),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/voice/widget-live/:conversationId/stop",
+    ...tenant,
+    manageCalls,
+    asyncHandler(widgetVoiceLiveCtrl.staffStop),
   );
   router.post(
     "/v1/workspaces/:workspaceId/voice/widget-live/:conversationId/audio",

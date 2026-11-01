@@ -50,3 +50,17 @@ test("tool nudges are short spoken lines", () => {
   assert.match(spokenToolNudge("lookup_order", "en"), /fetching/i);
   assert.match(spokenToolNudge("order_status", "en"), /checking/i);
 });
+
+test("a negated or corrected yes never authorizes a voice action", () => {
+  for (const text of [
+    "Yes, but do not book anything yet.",
+    "Yes, don't cancel it.",
+    "No, wait.",
+    "Okay, not yet.",
+    "ہاں، ابھی نہیں",
+    "haan, abhi nahi",
+  ]) {
+    assert.equal(visitorConfirmed(text), false, text);
+  }
+  assert.equal(visitorConfirmed("Yes, go ahead."), true);
+});

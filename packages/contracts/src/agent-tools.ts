@@ -21,6 +21,13 @@ export type AgentToolDefinitionBase = {
   timeout_ms?: number;
   /** When false, timeout → unknown and no automatic retry. */
   idempotent?: boolean;
+  policy?: {
+    enabled?: boolean;
+    allowed_channels?: Array<"chat" | "voice" | "webhook">;
+    confirmation?: "never" | "user" | "staff";
+    risk?: "read" | "write";
+    max_calls_per_turn?: number;
+  };
 };
 
 export type AgentHttpToolAuth = {

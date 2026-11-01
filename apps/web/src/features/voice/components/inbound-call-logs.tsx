@@ -18,6 +18,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { listAgents } from "@/features/agents/lib/client";
+import type { Agent } from "@/features/agents/lib/types";
 import { formatDuration, formatFirstAudio, formatUtcDateTime } from "../lib/format";
 import { getVoiceRepository } from "../lib/repository";
 import type {
@@ -66,7 +68,15 @@ export function InboundCallLogs({
 
   // Simulator modal state
   const [showSimulator, setShowSimulator] = useState(false);
-  const [simulatedCallPlaced, setSimulatedCallPlaced] = useState(false);
+  const [simulationCount, setSimulationCount] = useState(0);
+  const [voiceAgents, setVoiceAgents] = useState<Agent[]>([]);
+  const [simulationAgentId, setSimulationAgentId] = useState("");
+  const [simulationUtterance, setSimulationUtterance] = useState(
+    "What is included in the AFK preparation course?",
+  );
+  const [simulationBusy, setSimulationBusy] = useState(false);
+  const [simulationError, setSimulationError] = useState<string | null>(null);
+  const [simulationReply, setSimulationReply] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,7 +113,39 @@ export function InboundCallLogs({
     return () => {
       cancelled = true;
     };
-  }, [repo, workspaceId, search, statusFilter, rangePreset, selectedAgent, simulatedCallPlaced]);
+  }, [repo, workspaceId, search, statusFilter, rangePreset, selectedAgent, simulationCount]);
+
+  useEffect(() => {
+    if (!showSimulator || isPreview) return;
+    let cancelled = false;
+    void listAgents(workspaceId, { limit: 100 }).then(({ agents: available = [] }) => {
+      if (cancelled) return;
+      const eligible = available.filter((agent) => !agent.archived_at && agent.channels?.voice);
+      setVoiceAgents(eligible);
+      setSimulationAgentId((current) =>
+        eligible.some((agent) => agent.id === current) ? current : eligible[0]?.id ?? "",
+      );
+    });
+    return () => { cancelled = true; };
+  }, [showSimulator, isPreview, workspaceId]);
+
+  const handleSimulateCall = async () => {
+    if (!simulationAgentId || !simulationUtterance.trim()) return;
+    setSimulationBusy(true);
+    setSimulationError(null);
+    setSimulationReply(null);
+    const result = await repo.simulateInboundCall(workspaceId, {
+      agent_id: simulationAgentId,
+      utterance_text: simulationUtterance.trim(),
+    });
+    if (result.status === "ready") {
+      setSimulationReply(result.data.result.assistant_text || "The agent returned no text response.");
+      setSimulationCount((count) => count + 1);
+    } else {
+      setSimulationError(result.message);
+    }
+    setSimulationBusy(false);
+  };
 
   // Handle opening call detail inspection drawer
   const handleInspectCall = async (callId: string) => {
@@ -687,14 +729,37 @@ export function InboundCallLogs({
                 <span>Simulated Caller:</span>
                 <span className="font-mono text-accent-black font-semibold">+1 (555) 019-2834</span>
               </div>
-              <div className="flex justify-between text-neutral-500">
+              <label className="flex items-center justify-between gap-3 text-neutral-500">
                 <span>Target Agent:</span>
-                <span className="text-accent-black font-semibold">Customer Support Agent</span>
-              </div>
-              <div className="flex justify-between text-neutral-500">
-                <span>Sample Dialogue:</span>
-                <span className="text-neutral-700 italic">&ldquo;I need help rescheduling my order&rdquo;</span>
-              </div>
+                <select
+                  value={simulationAgentId}
+                  onChange={(event) => setSimulationAgentId(event.target.value)}
+                  disabled={simulationBusy || isPreview}
+                  className="max-w-[65%] rounded border border-neutral-200 bg-white px-2 py-1 text-accent-black"
+                >
+                  {voiceAgents.length === 0 && <option value="">No voice agents available</option>}
+                  {voiceAgents.map((agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
+                </select>
+              </label>
+              <label className="block text-neutral-500">
+                <span className="mb-1 block">Caller says:</span>
+                <textarea
+                  value={simulationUtterance}
+                  onChange={(event) => setSimulationUtterance(event.target.value)}
+                  disabled={simulationBusy || isPreview}
+                  rows={2}
+                  className="w-full resize-y rounded border border-neutral-200 bg-white p-2 text-accent-black"
+                />
+              </label>
+              {simulationError && <p role="alert" className="text-red-700">{simulationError}</p>}
+              {simulationReply && (
+                <div className="rounded border border-emerald-200 bg-emerald-50 p-2 text-neutral-700">
+                  <span className="font-semibold">Agent:</span> {simulationReply}
+                </div>
+              )}
+              {isPreview && (
+                <p className="text-amber-700">Connect to a workspace to run a real call simulation.</p>
+              )}
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">
@@ -707,13 +772,11 @@ export function InboundCallLogs({
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setSimulatedCallPlaced(true);
-                  setShowSimulator(false);
-                }}
-                className="px-4 py-2 bg-heat-100 hover:bg-heat-200 text-white text-xs font-semibold rounded-8 shadow-xs transition-colors"
+                onClick={() => void handleSimulateCall()}
+                disabled={simulationBusy || !simulationAgentId || !simulationUtterance.trim() || isPreview}
+                className="px-4 py-2 bg-heat-100 hover:bg-heat-200 text-white text-xs font-semibold rounded-8 shadow-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Start Simulation
+                {simulationBusy ? "Running…" : "Run simulation"}
               </button>
             </div>
           </div>

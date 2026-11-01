@@ -195,7 +195,7 @@ export function validateAgentGraph(
         edge_id: edge.id,
         node_id: sourceNode.id,
         code: "PORT_INVALID",
-        message: "Connection references an unknown output port.",
+        message: `Connection from "${sourceNode.name}" uses unknown output port "${edge.source_port ?? "(missing)"}". Valid outputs: ${graphOutputPorts(sourceNode).join(", ") || "none"}.`,
       });
     if (edge.target_port !== "in")
       issues.push({
@@ -501,6 +501,9 @@ function validateNodeConfig(
 
     case "knowledge_search": {
       const cfg = node.config as import("./agent-graph.js").KnowledgeSearchNodeConfig;
+      if (cfg.use_all_sources) {
+        break;
+      }
       if (!Array.isArray(cfg.source_ids) || cfg.source_ids.length === 0) {
         issues.push({
           node_id: node.id,
@@ -555,7 +558,10 @@ function validateNodeConfig(
 
     case "ai_prompt": {
       const cfg = node.config as import("./agent-graph.js").AiPromptNodeConfig;
-      if (!cfg.instructions || !cfg.instructions.trim()) {
+      if (
+        cfg.inherit_agent_instructions !== true &&
+        (!cfg.instructions || !cfg.instructions.trim())
+      ) {
         issues.push({
           node_id: node.id,
           field: "instructions",

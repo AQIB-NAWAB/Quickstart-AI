@@ -6,8 +6,10 @@ export type EditorTabKey =
   | "instructions"
   | "model"
   | "tools"
+  | "policies"
   | "identity"
   | "releases"
+  | "observability"
   | "evaluation";
 
 type Props = {
@@ -22,8 +24,10 @@ export function EditorTabs({ activeTab, onTabChange, workspaceId, agentId }: Pro
     { key: "instructions", label: "Instructions" },
     { key: "model", label: "Model" },
     { key: "tools", label: "Tools" },
+    { key: "policies", label: "Knowledge & safety" },
     { key: "identity", label: "Identity & channels" },
     { key: "releases", label: "Releases" },
+    { key: "observability", label: "Observability" },
     {
       key: "evaluation",
       label: "Evaluation",

@@ -20,5 +20,20 @@ export function createInternalController(facts: FactsService) {
         total: result.total,
       });
     }) as RequestHandler,
+    createFact: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const workspaceId = routeParam(req.params.workspaceId);
+      const body = (req.body ?? {}) as {
+        subject_key?: unknown;
+        fact_key?: unknown;
+        fact_text?: unknown;
+      };
+      const fact = await facts.create(workspaceId, "runtime", {
+        subject_key: body.subject_key,
+        fact_key: body.fact_key,
+        fact_text: body.fact_text,
+      });
+      sendPlatformJson(res, 201, { request_id: requestId, fact });
+    }) as RequestHandler,
   };
 }

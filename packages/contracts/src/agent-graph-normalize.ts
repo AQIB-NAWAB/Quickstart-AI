@@ -213,6 +213,13 @@ export function isAgentGraphShape(value: unknown): value is AgentGraph {
       return false;
     for (const key of arrays) {
       for (const item of (c[key] ?? []) as Record<string, unknown>[]) {
+        if (
+          item.allowed_values !== undefined &&
+          (!Array.isArray(item.allowed_values) ||
+            item.allowed_values.length > 100 ||
+            item.allowed_values.some((value) => typeof value !== "string" || value.length > 1000))
+        )
+          return false;
         for (const field of [
           "id",
           "variable",

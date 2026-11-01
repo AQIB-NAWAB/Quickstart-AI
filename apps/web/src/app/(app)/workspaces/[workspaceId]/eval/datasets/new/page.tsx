@@ -1,5 +1,5 @@
 import { loadWorkspaceShell } from "@/lib/server/auth/session";
-import { getEvaluationRepository } from "@/features/evaluation/lib/repository";
+import { gatewayFetch, getAccessTokenFromCookies } from "@/lib/server/gateway/fetch";
 import { DatasetForm } from "@/features/evaluation/components/dataset-form";
 
 export const metadata = {
@@ -15,21 +15,18 @@ interface Props {
 
 export default async function NewDatasetPage({ params }: Props) {
   const { activeWorkspace } = await loadWorkspaceShell(params.workspaceId);
-  const repo = getEvaluationRepository(false);
-
-  const handleCreate = async (data: { name: string; description?: string }) => {
-    "use server";
-    const res = await repo.createDataset(activeWorkspace.id, data);
-    if (res.status === "ready") return res.data;
-    throw new Error(res.message);
-  };
+  const token = await getAccessTokenFromCookies();
+  const agentsResult = await gatewayFetch<{ agents: Array<{ id: string; name: string }> }>(
+    `/v1/workspaces/${encodeURIComponent(activeWorkspace.id)}/agents?limit=100`,
+    { accessToken: token },
+  );
 
   return (
     <div className="w-full">
       <DatasetForm
         workspaceId={activeWorkspace.id}
         isPreview={false}
-        onSubmit={handleCreate}
+        agents={agentsResult.ok ? agentsResult.data.agents : []}
       />
     </div>
   );

@@ -1,4 +1,5 @@
 import type {
+  AgentConfiguration,
   AgentGraph,
   AgentGraphNode,
   GraphNodeType,
@@ -25,6 +26,9 @@ export type ExecutionContext = {
   checkpoint?: () => Promise<void>;
   onAssistantMessage?: (text: string) => Promise<void>;
   onTraceEvent?: (event: GraphTraceEvent) => void;
+  agentConfiguration?: AgentConfiguration;
+  subjectKey?: string;
+  allowTools?: boolean;
 };
 
 export type NodeExecutionResult = {

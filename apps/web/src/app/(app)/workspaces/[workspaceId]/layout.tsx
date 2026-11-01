@@ -13,7 +13,6 @@ export default async function WorkspaceLayout({ children, params }: Props) {
     <AppShell
       workspaceId={activeWorkspace.id}
       workspaceName={activeWorkspace.name}
-      workspaceSlug={activeWorkspace.slug}
       userEmail={me.user.email}
       workspaces={workspaces}
       organizations={me.organizations}

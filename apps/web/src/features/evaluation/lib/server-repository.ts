@@ -47,8 +47,7 @@ export const serverEvaluationRepository: EvaluationRepository = {
     const runs = runsRes.ok ? (runsRes.data.runs ?? []).map(mapApiRun) : [];
     const summary = summaryRes.ok ? mapApiSummary(summaryRes.data.summary) : undefined;
 
-    const selectedDataset =
-      (datasetId ? datasets.find((d) => d.id === datasetId) : null) ||
+    const selectedDataset = (datasetId ? datasets.find((d) => d.id === datasetId) : null) ||
       datasets[0] || {
         id: "default",
         workspaceId,
@@ -86,9 +85,7 @@ export const serverEvaluationRepository: EvaluationRepository = {
     };
   },
 
-  async listDatasets(
-    workspaceId: string,
-  ): Promise<RepositoryResult<EvaluationDataset[]>> {
+  async listDatasets(workspaceId: string): Promise<RepositoryResult<EvaluationDataset[]>> {
     const token = await getAccessTokenFromCookies();
     if (!token) return fail(401, "Not signed in");
 
@@ -135,17 +132,18 @@ export const serverEvaluationRepository: EvaluationRepository = {
 
   async createDataset(
     workspaceId: string,
-    data: { name: string; description?: string; tags?: string[] },
+    data: { agentId?: string; name: string; description?: string; tags?: string[] },
   ): Promise<RepositoryResult<EvaluationDataset>> {
     const token = await getAccessTokenFromCookies();
     if (!token) return fail(401, "Not signed in");
+    if (!data.agentId) return fail(400, "Select an agent before creating a dataset");
 
     const res = await gatewayFetch<{ dataset: any }>(
       `/v1/workspaces/${encodeURIComponent(workspaceId)}/eval/datasets`,
       {
         accessToken: token,
         method: "POST",
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, agent_id: data.agentId }),
       },
     );
 

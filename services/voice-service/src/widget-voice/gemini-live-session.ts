@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import WebSocket from "ws";
+import {
+  REALTIME_AGENT_TOOL,
+  REALTIME_AGENT_INSTRUCTIONS,
+  RealtimeAgentBridge,
+} from "./realtime-agent-bridge.js";
 import type { Logger } from "@quickstart/logging";
 import type { VoiceLiveEvent } from "./live-session.js";
 
@@ -6,6 +12,8 @@ type Listener = (event: VoiceLiveEvent) => void;
 
 type GeminiServerMessage = {
   setupComplete?: Record<string, unknown>;
+  toolCall?: { functionCalls?: Array<{ id?: string; name?: string; args?: unknown }> };
+  toolCallCancellation?: { ids?: string[] };
   error?: { message?: string };
   serverContent?: {
     interrupted?: boolean;
@@ -39,7 +47,14 @@ export class GeminiLiveSession {
   private pendingAudio: Buffer[] = [];
   private pendingAudioBytes = 0;
   private held = false;
-  private transferSpoken = false;
+  private readonly bridge: RealtimeAgentBridge;
+  private turnId: string | undefined;
+  private generation = 0;
+  private handoffPending = false;
+  private announcingTransfer = false;
+  private readonly handledCalls = new Set<string>();
+  private readonly pendingCalls = new Set<string>();
+  private readonly cancelledCalls = new Set<string>();
   private pendingTransferName: string | null = null;
 
   constructor(
@@ -50,12 +65,19 @@ export class GeminiLiveSession {
       conversationId: string;
       actorId: string;
       conversationUrl: string;
+      runtimeUrl: string;
+      turnTimeoutMs?: number;
+      url?: string;
       internalToken: string;
       logger: Logger;
       brief: Promise<string>;
       onTransferSpoken?: () => void;
     },
-  ) {}
+  ) {
+    // Gemini transcription is an independent stream of text fragments. Give
+    // late fragments a short quiet window before authorizing a runtime action.
+    this.bridge = new RealtimeAgentBridge({ ...input, transcriptSettlingMs: 100 });
+  }
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -72,8 +94,9 @@ export class GeminiLiveSession {
     const instruction = await this.input.brief;
     if (this.closed) return;
     const url =
+      this.input.url ??
       "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" +
-      encodeURIComponent(this.input.apiKey);
+        encodeURIComponent(this.input.apiKey);
     const socket = new WebSocket(url);
     this.socket = socket;
 
@@ -90,8 +113,19 @@ export class GeminiLiveSession {
               },
             },
             systemInstruction: {
-              parts: [{ text: instruction }],
+              parts: [{ text: `${instruction}\n\n${REALTIME_AGENT_INSTRUCTIONS}` }],
             },
+            tools: [
+              {
+                functionDeclarations: [
+                  {
+                    name: REALTIME_AGENT_TOOL.name,
+                    description: REALTIME_AGENT_TOOL.description,
+                    parameters: { type: "OBJECT", properties: {} },
+                  },
+                ],
+              },
+            ],
             inputAudioTranscription: {},
             outputAudioTranscription: {},
             realtimeInputConfig: {
@@ -106,8 +140,13 @@ export class GeminiLiveSession {
       );
     });
 
-    socket.addEventListener("message", (ev) => {
-      void this.onSocketMessage(ev.data);
+    socket.on("message", (data) => {
+      void this.onSocketMessage(data.toString()).catch((err) => {
+        this.input.logger.warn("voice.gemini.message_failed", {
+          message: err instanceof Error ? err.message : "message failed",
+        });
+        this.emit({ type: "error", message: "Realtime agent response failed" });
+      });
     });
 
     socket.addEventListener("error", () => {
@@ -122,7 +161,9 @@ export class GeminiLiveSession {
         code: close.code ?? 0,
         reason: reason.slice(0, 300),
       });
-      if (!this.closed && !this.ready) {
+      this.bridge.close();
+      this.ready = false;
+      if (!this.closed) {
         this.emit({
           type: "error",
           message: reason || "Gemini Live connection closed",
@@ -132,10 +173,12 @@ export class GeminiLiveSession {
   }
 
   private async onSocketMessage(data: unknown): Promise<void> {
+    if (this.closed) return;
     let raw = "";
     if (typeof data === "string") raw = data;
     else if (data instanceof ArrayBuffer) raw = Buffer.from(data).toString("utf8");
-    else if (ArrayBuffer.isView(data)) raw = Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
+    else if (ArrayBuffer.isView(data))
+      raw = Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("utf8");
     else if (data && typeof (data as Blob).text === "function") raw = await (data as Blob).text();
     if (!raw) return;
     let msg: GeminiServerMessage;
@@ -145,93 +188,171 @@ export class GeminiLiveSession {
       return;
     }
     if (msg.setupComplete) {
-        this.ready = true;
-        this.input.logger.info("widget.voice.gemini_socket", { event: "setup_complete" });
-        const queued = this.pendingAudio;
-        this.pendingAudio = [];
-        this.pendingAudioBytes = 0;
-        for (const chunk of queued) this.sendPcm(chunk);
-        this.flushTransfer();
-        this.emit({ type: "ready" });
+      this.ready = true;
+      this.input.logger.info("widget.voice.gemini_socket", { event: "setup_complete" });
+      const queued = this.pendingAudio;
+      this.pendingAudio = [];
+      this.pendingAudioBytes = 0;
+      for (const chunk of queued) this.sendPcm(chunk);
+      this.flushTransfer();
+      this.emit({ type: "ready" });
+      return;
+    }
+    if (msg.error?.message) {
+      this.emit({ type: "error", message: msg.error.message });
+      this.input.logger.warn("widget.voice.gemini_error", { message: msg.error.message });
+      return;
+    }
+    if (msg.toolCallCancellation) {
+      for (const id of msg.toolCallCancellation.ids ?? []) {
+        this.cancelledCalls.add(id);
+        if (this.pendingCalls.has(id)) this.cancelTurn();
+      }
+      if (this.cancelledCalls.size > 128) this.cancelledCalls.clear();
+      return;
+    }
+    if (msg.toolCall?.functionCalls) {
+      void this.handleToolCalls(msg.toolCall.functionCalls).catch((err) => {
+        this.input.logger.warn("voice.gemini.tool_failed", {
+          message: err instanceof Error ? err.message : "tool failed",
+        });
+        this.emit({ type: "error", message: "Realtime agent tool failed" });
+      });
+      return;
+    }
+    const content = msg.serverContent;
+    if (!content || (this.held && !this.announcingTransfer)) return;
+    if (content.interrupted) {
+      this.cancelTurn();
+      this.emit({ type: "interrupt" });
+      return;
+    }
+    const interim = content.interimInputTranscription?.text?.trim();
+    if (interim) this.emit({ type: "transcript", text: interim, interim: true });
+    const heard = content.inputTranscription?.text;
+    if (heard) {
+      const id = this.ensureTurn();
+      this.userText = heard.startsWith(this.userText) ? heard : this.userText + heard;
+      this.bridge.transcript(id, this.userText);
+      this.emit({ type: "transcript", text: this.userText.trim(), interim: true });
+    }
+    const spoken = content.outputTranscription?.text ?? "";
+    if (spoken) {
+      const delta = spoken.startsWith(this.assistantText)
+        ? spoken.slice(this.assistantText.length)
+        : spoken;
+      this.assistantText = spoken.startsWith(this.assistantText)
+        ? spoken
+        : this.assistantText + spoken;
+      if (delta) this.emit({ type: "assistant_token", delta });
+    }
+    for (const part of content.modelTurn?.parts ?? []) {
+      if (part.inlineData?.data)
+        this.emit({
+          type: "audio",
+          mime: part.inlineData.mimeType || "audio/pcm",
+          data: part.inlineData.data,
+          encoding: "pcm16",
+          sample_rate: 24000,
+        });
+    }
+    if (content.turnComplete) {
+      if (this.pendingCalls.size > 0) return;
+      this.announcingTransfer = false;
+      const id = this.turnId;
+      const generation = this.generation;
+      if (this.userText.trim())
+        this.emit({ type: "transcript", text: this.userText.trim(), interim: false });
+      if (this.assistantText.trim())
+        this.emit({ type: "assistant_done", text: this.assistantText.trim() });
+      const text = this.assistantText;
+      this.assistantText = "";
+      this.userText = "";
+      this.turnId = undefined;
+      await this.bridge.complete(id, text, randomUUID());
+      if (this.closed || generation !== this.generation || this.turnId) return;
+      this.emit({ type: "turn_done" });
+      if (this.handoffPending) {
+        this.handoffPending = false;
+        this.held = true;
+        this.input.onTransferSpoken?.();
+      }
+    }
+  }
+
+  private ensureTurn(): string {
+    this.turnId ??= this.bridge.beginTurn();
+    return this.turnId;
+  }
+
+  private cancelTurn(): void {
+    this.generation++;
+    this.bridge.interrupt();
+    this.assistantText = "";
+    this.userText = "";
+    this.turnId = undefined;
+    this.handoffPending = false;
+  }
+
+  private async handleToolCalls(
+    calls: Array<{ id?: string; name?: string; args?: unknown }>,
+  ): Promise<void> {
+    if (this.closed || this.held) return;
+    const id = this.ensureTurn();
+    const generation = this.generation;
+    const responses: Array<{ id: string; name: string; response: unknown }> = [];
+    for (const call of calls.slice(0, 8)) {
+      if (!call.id || this.handledCalls.has(call.id) || this.cancelledCalls.has(call.id)) continue;
+      this.handledCalls.add(call.id);
+      if (this.handledCalls.size > 128)
+        this.handledCalls.delete(this.handledCalls.values().next().value!);
+      this.pendingCalls.add(call.id);
+      const args = call.args ?? {};
+      const valid =
+        call.name === REALTIME_AGENT_TOOL.name &&
+        args &&
+        typeof args === "object" &&
+        !Array.isArray(args) &&
+        Object.keys(args).length === 0;
+      const result = valid
+        ? await this.bridge.consult(id)
+        : {
+            status: "unavailable",
+            answer: "Unsupported function or arguments. No action was taken.",
+          };
+      this.pendingCalls.delete(call.id);
+      if (
+        this.closed ||
+        this.held ||
+        generation !== this.generation ||
+        this.cancelledCalls.has(call.id)
+      )
         return;
-      }
-      if (msg.error?.message) {
-        this.emit({ type: "error", message: msg.error.message });
-        this.input.logger.warn("widget.voice.gemini_error", { message: msg.error.message });
-        return;
-      }
-      const content = msg.serverContent;
-      if (!content) return;
-
-      if (content.interrupted) {
-        this.assistantText = "";
-        this.emit({ type: "interrupt" });
-      }
-
-      const interim = content.interimInputTranscription?.text?.trim();
-      if (interim) this.emit({ type: "transcript", text: interim, interim: true });
-
-      const heard = content.inputTranscription?.text?.trim();
-      if (heard && heard !== this.userText) {
-        this.userText = heard;
-        this.emit({ type: "transcript", text: heard, interim: false });
-        void this.persist("user", heard);
-      }
-
-      const spoken = content.outputTranscription?.text ?? "";
-      if (spoken) {
-        const delta = spoken.startsWith(this.assistantText)
-          ? spoken.slice(this.assistantText.length)
-          : spoken;
-        this.assistantText = spoken.startsWith(this.assistantText) ? spoken : this.assistantText + spoken;
-        if (delta) this.emit({ type: "assistant_token", delta });
-        this.noteTransfer(this.assistantText);
-      }
-
-      for (const part of content.modelTurn?.parts ?? []) {
-        if (part.inlineData?.data) {
-          this.emit({
-            type: "audio",
-            mime: part.inlineData.mimeType || "audio/pcm",
-            data: part.inlineData.data,
-            encoding: "pcm16",
-            sample_rate: 24000,
-          });
-        }
-      }
-
-      if (content.turnComplete) {
-        if (this.assistantText.trim()) {
-          this.emit({ type: "assistant_done", text: this.assistantText.trim() });
-          void this.persist("assistant", this.assistantText.trim());
-        }
-        this.assistantText = "";
-        this.userText = "";
-        this.emit({ type: "turn_done" });
-      }
+      if ("handoff" in result && result.handoff) this.handoffPending = true;
+      responses.push({ id: call.id, name: call.name ?? "unknown", response: result });
+    }
+    if (responses.length && this.socket?.readyState === WebSocket.OPEN)
+      this.socket.send(JSON.stringify({ toolResponse: { functionResponses: responses } }));
   }
 
   sayTransfer(name: string): void {
-    const safe = name.replace(/[\r\n"]/g, " ").trim().slice(0, 80) || "a teammate";
+    const safe =
+      name
+        .replace(/[\r\n"]/g, " ")
+        .trim()
+        .slice(0, 80) || "a teammate";
     this.pendingTransferName = safe;
+    this.announcingTransfer = true;
     this.flushTransfer();
   }
 
   holdModel(): void {
     this.held = true;
+    this.cancelTurn();
   }
 
   releaseModel(): void {
     this.held = false;
-    this.transferSpoken = false;
-  }
-
-  private noteTransfer(text: string): void {
-    if (this.transferSpoken) return;
-    if (!/switching you/i.test(text)) return;
-    this.transferSpoken = true;
-    this.held = true;
-    this.input.onTransferSpoken?.();
   }
 
   private flushTransfer(): void {
@@ -287,6 +408,7 @@ export class GeminiLiveSession {
 
   close(): void {
     this.closed = true;
+    this.bridge.close();
     this.ready = false;
     this.pendingAudio = [];
     this.pendingAudioBytes = 0;
@@ -295,29 +417,5 @@ export class GeminiLiveSession {
       this.socket.close();
     }
     this.socket = null;
-  }
-
-  private async persist(sender: "user" | "assistant", text: string): Promise<void> {
-    const url = `${this.input.conversationUrl}/internal/workspaces/${encodeURIComponent(this.input.workspaceId)}/widget/conversations/${encodeURIComponent(this.input.conversationId)}/messages`;
-    try {
-      await fetch(url, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.input.internalToken}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          text,
-          sender_type: sender,
-          sender_id: this.input.actorId,
-          idempotency_key: randomUUID(),
-          metadata: { channel: "widget", modality: "gemini-live" },
-        }),
-      });
-    } catch (err) {
-      this.input.logger.warn("widget.voice.persist_failed", {
-        message: err instanceof Error ? err.message : "persist failed",
-      });
-    }
   }
 }

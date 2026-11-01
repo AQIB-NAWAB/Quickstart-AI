@@ -2,7 +2,7 @@
 
 Feature **21–22 / 21B / 21C** — realtime voice edge on port **3008**.
 
-Cascade (default): audio → STT → runtime turn → TTS. Opt-in S2S for emotional/compliance profiles (no tools/RAG). Multi-provider telephony (Twilio, Telnyx, SIP/BYOC via SBC bridge).
+Cascade (default): audio → STT → runtime turn → TTS. Native realtime S2S supports tools and knowledge through the shared agent runtime. Legacy batch S2S remains tool-free. Multi-provider telephony (Twilio, Telnyx, SIP/BYOC via SBC bridge).
 
 ## Run
 
@@ -16,11 +16,11 @@ pnpm --filter @quickstart/service-voice start
 
 ## Voice models (current defaults)
 
-| Layer | Default | Other supported choices |
-| --- | --- | --- |
-| STT | Deepgram **Nova-3** (`DEEPGRAM_MODEL=nova-3`) | OpenAI `gpt-4o-transcribe`; ElevenLabs Scribe v2 Realtime / AssemblyAI are not wired yet |
-| TTS | Cartesia **Sonic 3.6** (`CARTESIA_MODEL=sonic-3.6`) | ElevenLabs `eleven_flash_v2_5` (low latency) or `eleven_v4` (quality), Fish Audio S2, OpenAI `gpt-4o-mini-tts`, Uplift Urdu |
-| S2S | Gemini **3.8 Live** (`GEMINI_LIVE_MODEL=gemini-3.8-live`) | OpenAI `gpt-realtime-2.1` or `gpt-live-1`, ElevenLabs `eleven_realtime_v1_mini` / `eleven_realtime_v1_max` |
+| Layer | Default                                                   | Other supported choices                                                                                                     |
+| ----- | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| STT   | Deepgram **Nova-3** (`DEEPGRAM_MODEL=nova-3`)             | OpenAI `gpt-4o-transcribe`; ElevenLabs Scribe v2 Realtime / AssemblyAI are not wired yet                                    |
+| TTS   | Cartesia **Sonic 3.6** (`CARTESIA_MODEL=sonic-3.6`)       | ElevenLabs `eleven_flash_v2_5` (low latency) or `eleven_v4` (quality), Fish Audio S2, OpenAI `gpt-4o-mini-tts`, Uplift Urdu |
+| S2S   | Gemini **3.8 Live** (`GEMINI_LIVE_MODEL=gemini-3.8-live`) | OpenAI `gpt-realtime-2.1` or `gpt-live-1`, ElevenLabs `eleven_realtime_v1_mini` / `eleven_realtime_v1_max`                  |
 
 `VOICE_S2S_PROVIDER` controls the live voice path:
 
@@ -32,8 +32,27 @@ Notes:
 
 - `gpt-live-1` is OpenAI's premier full-duplex model ($0.05/min). Set `OPENAI_REALTIME_MODEL=gpt-live-1` to use it; `gpt-realtime-2.1` remains the default Realtime path.
 - ElevenLabs Realtime is OpenAI-compatible and requires `ELEVENLABS_API_KEY` plus `ELEVENLABS_VOICE_ID`.
-- Gemini Live does not support tools/RAG; use cascade for tool-heavy agents.
+- OpenAI Realtime and Gemini Live expose `consult_agent`, delegating tools, knowledge, and confirmations to the shared runtime. See [ADR 0030](../../docs/adr/0030-native-realtime-agent-tools.md).
 - The agent's published `voice.tts_voice_id` selects a catalog voice, so one workspace can mix Urdu Uplift, English Cartesia, Fish, and ElevenLabs voices.
+
+## Native realtime tools and knowledge
+
+Set `VOICE_S2S_PROVIDER=openai` or `VOICE_S2S_PROVIDER=gemini` with the matching
+provider key, then publish the agent with its existing tools and selected knowledge
+sources. The native session uses the same `RUNTIME_URL`, internal service token,
+and agent configuration as cascade. No new public tool execution endpoint or
+client-side credential is needed. `auto` continues to prefer a configured cascade.
+
+For example, a caller asking to check an appointment triggers `consult_agent`.
+The runtime retrieves the relevant information or executes a permitted tool. If
+confirmation or a required field is missing, the realtime model speaks the
+runtime's question and waits for the caller. A later confirmation starts a new
+runtime turn; a duplicated provider event does not repeat the action.
+
+Caller transcription must be available. Runtime failure returns an unavailable
+result; actions are never automatically retried after an unknown outcome. See
+[the implementation and validation notes](../../docs/adr/0030-native-realtime-agent-tools.md)
+for ordering, interruption, transcript, and compatibility limits.
 
 ## Fake-media simulation
 

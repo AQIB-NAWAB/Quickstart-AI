@@ -1,11 +1,25 @@
-import { requestIdFromResponse, sendPlatformJson, type RequestHandler } from "@quickstart/http-server";
-import type { AgentToolDefinition } from "@quickstart/contracts";
+import {
+  requestIdFromResponse,
+  sendPlatformJson,
+  type RequestHandler,
+} from "@quickstart/http-server";
+import {
+  createDefaultAgentGraph,
+  normalizeAgentConfiguration,
+  type AgentToolDefinition,
+} from "@quickstart/contracts";
 import { toAgentJson, toAgentVersionJson } from "../domain/types.js";
 import type { AgentsService } from "../services/agents.service.js";
 import { routeParam } from "../utils/route-param.js";
+import { getAgentCatalog } from "../lib/agent-catalog.js";
 
 export function createAgentsController(agents: AgentsService) {
   return {
+    getCatalog: (async (_req, res) => {
+      const requestId = requestIdFromResponse(res);
+      sendPlatformJson(res, 200, { request_id: requestId, ...getAgentCatalog() });
+    }) as RequestHandler,
+
     createAgent: (async (req, res) => {
       const requestId = requestIdFromResponse(res);
       const tenant = res.locals.tenantContext!;
@@ -17,6 +31,7 @@ export function createAgentsController(agents: AgentsService) {
         model_settings?: Record<string, unknown>;
         channels?: { chat?: boolean; voice?: boolean };
         tools?: AgentToolDefinition[];
+        configuration?: unknown;
       };
 
       const agent = await agents.createAgent(tenant, {
@@ -29,6 +44,9 @@ export function createAgentsController(agents: AgentsService) {
           ? { chat: body.channels.chat ?? true, voice: body.channels.voice ?? false }
           : undefined,
         tools: body?.tools,
+        configuration: body?.configuration
+          ? normalizeAgentConfiguration(body.configuration)
+          : undefined,
       });
 
       sendPlatformJson(res, 201, {
@@ -37,13 +55,19 @@ export function createAgentsController(agents: AgentsService) {
       });
     }) as RequestHandler,
 
-    listAgents: (async (_req, res) => {
+    listAgents: (async (req, res) => {
       const requestId = requestIdFromResponse(res);
       const tenant = res.locals.tenantContext!;
-      const list = await agents.listAgents(tenant);
+      const limit = Math.min(Math.max(Number(req.query.limit ?? 50), 1), 100);
+      const list = await agents.listAgents(tenant, {
+        includeArchived: req.query.include_archived === "true",
+        limit,
+        cursor: typeof req.query.cursor === "string" ? req.query.cursor : undefined,
+      });
       sendPlatformJson(res, 200, {
         request_id: requestId,
-        agents: list.map(toAgentJson),
+        agents: list.items.map(toAgentJson),
+        next_cursor: list.nextCursor,
       });
     }) as RequestHandler,
 
@@ -73,6 +97,7 @@ export function createAgentsController(agents: AgentsService) {
         version?: number;
         tools?: AgentToolDefinition[];
         voice?: import("@quickstart/contracts").AgentVoiceSettings;
+        configuration?: unknown;
       };
 
       const expectedVersion = body.expected_version ?? body.version;
@@ -87,6 +112,9 @@ export function createAgentsController(agents: AgentsService) {
           : undefined,
         tools: body.tools,
         voice: body.voice,
+        configuration: body.configuration
+          ? normalizeAgentConfiguration(body.configuration)
+          : undefined,
         expectedVersion: expectedVersion as number,
       });
 
@@ -107,14 +135,87 @@ export function createAgentsController(agents: AgentsService) {
       });
     }) as RequestHandler,
 
+    archiveAgent: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const tenant = res.locals.tenantContext!;
+      const agentId = routeParam(req.params.agentId);
+      const body = req.body as { archived?: boolean };
+      const agent = await agents.archiveAgent(tenant, agentId, body.archived !== false);
+      sendPlatformJson(res, 200, { request_id: requestId, agent: toAgentJson(agent) });
+    }) as RequestHandler,
+
+    setCanary: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const tenant = res.locals.tenantContext!;
+      const agentId = routeParam(req.params.agentId);
+      const body = req.body as { version_id?: string | null; canary_percentage?: number };
+      const agent = await agents.setCanary(
+        tenant,
+        agentId,
+        body.version_id ?? null,
+        Number(body.canary_percentage ?? 0),
+      );
+      sendPlatformJson(res, 200, { request_id: requestId, agent: toAgentJson(agent) });
+    }) as RequestHandler,
+
+    scheduleRelease: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const tenant = res.locals.tenantContext!;
+      const agentId = routeParam(req.params.agentId);
+      const body = req.body as { version_id?: string; publish_at?: string };
+      const agent = await agents.scheduleRelease(
+        tenant,
+        agentId,
+        body.version_id ?? "",
+        body.publish_at ?? "",
+      );
+      sendPlatformJson(res, 200, { request_id: requestId, agent: toAgentJson(agent) });
+    }) as RequestHandler,
+
+    getEnvironmentComparison: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const tenant = res.locals.tenantContext!;
+      const agentId = routeParam(req.params.agentId);
+      const environments = await agents.getEnvironmentComparison(tenant, agentId);
+      sendPlatformJson(res, 200, { request_id: requestId, environments });
+    }) as RequestHandler,
+
+    archiveAgents: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const tenant = res.locals.tenantContext!;
+      const body = req.body as { agent_ids?: string[]; archived?: boolean };
+      const result = await agents.archiveAgents(
+        tenant,
+        body.agent_ids ?? [],
+        body.archived !== false,
+      );
+      sendPlatformJson(res, 200, { request_id: requestId, agents: result.map(toAgentJson) });
+    }) as RequestHandler,
+
+    getReleaseReadiness: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const tenant = res.locals.tenantContext!;
+      const agentId = routeParam(req.params.agentId);
+      const readiness = await agents.getReleaseReadiness(tenant, agentId);
+      sendPlatformJson(res, 200, { request_id: requestId, ...readiness });
+    }) as RequestHandler,
+
     getGraph: (async (req, res) => {
       const requestId = requestIdFromResponse(res);
       const tenant = res.locals.tenantContext!;
       const agentId = routeParam(req.params.agentId);
       const agent = await agents.getAgent(tenant, agentId);
+      const graph =
+        agent.draftGraph ??
+        (agent.builderMode === "legacy"
+          ? createDefaultAgentGraph({
+              channels: agent.channels,
+              knowledge: agent.configuration?.knowledge,
+            })
+          : null);
       sendPlatformJson(res, 200, {
         request_id: requestId,
-        graph: agent.draftGraph ?? null,
+        graph,
         schema_version: agent.graphSchemaVersion ?? 1,
         agent_version: agent.version,
         draft_revision: agent.version,
@@ -161,6 +262,15 @@ export function createAgentsController(agents: AgentsService) {
       });
     }) as RequestHandler,
 
+    proposeAiEdit: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const tenant = res.locals.tenantContext!;
+      const agentId = routeParam(req.params.agentId);
+      const body = req.body as { prompt?: string };
+      const proposal = await agents.proposeAiEdit(tenant, agentId, { prompt: body?.prompt ?? "" });
+      sendPlatformJson(res, 200, { request_id: requestId, ...proposal });
+    }) as RequestHandler,
+
     publishAgent: (async (req, res) => {
       const requestId = requestIdFromResponse(res);
       const tenant = res.locals.tenantContext!;
@@ -170,12 +280,18 @@ export function createAgentsController(agents: AgentsService) {
         version?: number;
         release_notes?: string;
         expected_revision?: number;
+        approval?: { approved?: boolean; note?: string };
+        completed_checklist?: string[];
       };
       const baseVersion = body.base_version ?? body.expected_revision ?? body.version;
 
       const result = await agents.publish(tenant, agentId, baseVersion as number, {
         requestId,
         releaseNotes: body.release_notes,
+        approval: body.approval
+          ? { approved: body.approval.approved === true, note: body.approval.note }
+          : undefined,
+        completedChecklist: body.completed_checklist,
       });
 
       sendPlatformJson(res, 201, {

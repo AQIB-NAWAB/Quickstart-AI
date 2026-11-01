@@ -7,6 +7,7 @@ import type {
   AgentVoiceSettings,
   ApiError,
 } from "./types";
+import type { AgentCatalogResponse, AgentConfiguration } from "@quickstart/contracts";
 
 type BffResponse<T> = { data?: T; error?: ApiError; status: number };
 
@@ -44,11 +45,31 @@ async function bff<T>(path: string, init?: RequestInit): Promise<BffResponse<T>>
 
 export async function listAgents(
   workspaceId: string,
-): Promise<{ agents?: Agent[]; error?: ApiError }> {
+  options: { limit?: number; cursor?: string; includeArchived?: boolean } = {},
+): Promise<{ agents?: Agent[]; nextCursor?: string | null; error?: ApiError }> {
+  const params = new URLSearchParams();
+  if (options.limit) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  if (options.includeArchived) params.set("include_archived", "true");
+  const suffix = params.toString() ? `?${params.toString()}` : "";
   const { data, error } = await bff<{ agents: Agent[] }>(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents`,
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents${suffix}`,
   );
-  return error ? { error } : { agents: data?.agents ?? [] };
+  return error
+    ? { error }
+    : {
+        agents: data?.agents ?? [],
+        nextCursor: (data as { next_cursor?: string | null } | undefined)?.next_cursor,
+      };
+}
+
+export async function getAgentCatalog(
+  workspaceId: string,
+): Promise<{ catalog?: AgentCatalogResponse; error?: ApiError }> {
+  const { data, error } = await bff<AgentCatalogResponse>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/catalog`,
+  );
+  return error ? { error } : { catalog: data };
 }
 
 export async function getAgent(
@@ -69,6 +90,8 @@ export type CreateAgentPayload = {
   model_settings?: Record<string, unknown>;
   channels?: Partial<AgentChannels>;
   tools?: AgentToolDefinition[];
+  voice?: AgentVoiceSettings;
+  configuration?: AgentConfiguration;
 };
 
 export async function createAgent(
@@ -94,6 +117,7 @@ export type UpdateAgentPayload = {
   channels?: Partial<AgentChannels>;
   tools?: AgentToolDefinition[];
   voice?: AgentVoiceSettings;
+  configuration?: AgentConfiguration;
   expected_version: number;
 };
 
@@ -131,16 +155,115 @@ export async function deleteAgent(
   return error ? { success: false, error } : { success: true };
 }
 
+export async function archiveAgent(
+  workspaceId: string,
+  agentId: string,
+  archived: boolean,
+): Promise<{ agent?: Agent; error?: ApiError }> {
+  const { data, error } = await bff<{ agent: Agent }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/archive`,
+    { method: "POST", body: JSON.stringify({ archived }) },
+  );
+  return error ? { error } : { agent: data?.agent };
+}
+
+export async function archiveAgents(
+  workspaceId: string,
+  agentIds: string[],
+  archived: boolean,
+): Promise<{ agents?: Agent[]; error?: ApiError }> {
+  const { data, error } = await bff<{ agents: Agent[] }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/archive-batch`,
+    { method: "POST", body: JSON.stringify({ agent_ids: agentIds, archived }) },
+  );
+  return error ? { error } : { agents: data?.agents ?? [] };
+}
+
+export async function setCanary(
+  workspaceId: string,
+  agentId: string,
+  versionId: string | null,
+  percentage: number,
+): Promise<{ agent?: Agent; error?: ApiError }> {
+  const { data, error } = await bff<{ agent: Agent }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/canary`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version_id: versionId, canary_percentage: percentage }),
+    },
+  );
+  return error ? { error } : { agent: data?.agent };
+}
+
+export async function scheduleRelease(
+  workspaceId: string,
+  agentId: string,
+  versionId: string,
+  publishAt: string,
+): Promise<{ agent?: Agent; error?: ApiError }> {
+  const { data, error } = await bff<{ agent: Agent }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/schedule-release`,
+    {
+      method: "POST",
+      body: JSON.stringify({ version_id: versionId, publish_at: publishAt }),
+    },
+  );
+  return error ? { error } : { agent: data?.agent };
+}
+
+export type AgentEnvironmentComparison = {
+  draft: AgentVersion["snapshot"];
+  staging: AgentVersion | null;
+  production: AgentVersion | null;
+  canary: AgentVersion | null;
+};
+
+export async function getEnvironmentComparison(
+  workspaceId: string,
+  agentId: string,
+): Promise<{ environments?: AgentEnvironmentComparison; error?: ApiError }> {
+  const { data, error } = await bff<{ environments: AgentEnvironmentComparison }>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/environments`,
+  );
+  return error ? { error } : { environments: data?.environments };
+}
+
+export type ReleaseReadiness = {
+  ready: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  warnings: string[];
+};
+
+export async function getReleaseReadiness(
+  workspaceId: string,
+  agentId: string,
+): Promise<{ readiness?: ReleaseReadiness; error?: ApiError }> {
+  const { data, error } = await bff<ReleaseReadiness>(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/release-readiness`,
+  );
+  return error ? { error } : { readiness: data };
+}
+
 export async function publishAgent(
   workspaceId: string,
   agentId: string,
   baseVersion: number,
+  options: {
+    approval?: { approved: boolean; note?: string };
+    completedChecklist?: string[];
+    releaseNotes?: string;
+  } = {},
 ): Promise<{ version?: AgentVersion; agent?: Agent; error?: ApiError }> {
   const { data, error } = await bff<{ version: AgentVersion; agent: Agent }>(
     `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/publish`,
     {
       method: "POST",
-      body: JSON.stringify({ base_version: baseVersion }),
+      body: JSON.stringify({
+        base_version: baseVersion,
+        approval: options.approval,
+        completed_checklist: options.completedChecklist,
+        release_notes: options.releaseNotes,
+      }),
     },
   );
   return error ? { error } : { version: data?.version, agent: data?.agent };
@@ -261,7 +384,11 @@ export async function executeTestTurn(
   if (!contentType.includes("text/event-stream") || !res.body) {
     const body = (await res.json().catch(() => ({}))) as {
       assistant_message?: { text: string };
-      turn?: { tool_calls?: TestTurnToolCall[]; usage?: TestTurnUsage; assistant_message?: { text?: string } };
+      turn?: {
+        tool_calls?: TestTurnToolCall[];
+        usage?: TestTurnUsage;
+        assistant_message?: { text?: string };
+      };
       error?: ApiError;
     };
     if (!res.ok) {

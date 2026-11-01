@@ -13,6 +13,7 @@ export type AnalyticsQueryOpts = {
   from: Date;
   to: Date;
   timezone?: string;
+  agentId?: string;
 };
 
 export class AnalyticsRepository {
@@ -27,6 +28,8 @@ export class AnalyticsRepository {
     const durationMs = opts.to.getTime() - opts.from.getTime();
     const priorFromIso = new Date(opts.from.getTime() - durationMs).toISOString();
     const priorToIso = fromIso;
+    const agentFilter = opts.agentId ? "AND detail->>'agent_id' = $4" : "";
+    const agentParams = opts.agentId ? [opts.agentId] : [];
 
     // Validate IANA timezone or default to UTC
     const tz = opts.timezone && /^[a-zA-Z0-9_+\-/]+$/.test(opts.timezone) ? opts.timezone : "UTC";
@@ -72,8 +75,9 @@ export class AnalyticsRepository {
        FROM usage_entries
        WHERE workspace_id = $1
          AND created_at >= $2
-         AND created_at < $3`,
-      [workspaceId, fromIso, toIso],
+         AND created_at < $3
+         ${agentFilter}`,
+      [workspaceId, fromIso, toIso, ...agentParams],
     );
 
     // 2. Prior interval summary query for trend comparison
@@ -89,11 +93,13 @@ export class AnalyticsRepository {
        FROM usage_entries
        WHERE workspace_id = $1
          AND created_at >= $2
-         AND created_at < $3`,
-      [workspaceId, priorFromIso, priorToIso],
+         AND created_at < $3
+         ${agentFilter}`,
+      [workspaceId, priorFromIso, priorToIso, ...agentParams],
     );
 
     // 3. Daily token and latency aggregations in requested IANA timezone
+    const dailyAgentFilter = opts.agentId ? "AND detail->>'agent_id' = $5" : "";
     const dailyRes = await this.pool.query<{
       bucket_date: string;
       total_tokens: string | null;
@@ -117,9 +123,10 @@ export class AnalyticsRepository {
        WHERE workspace_id = $1
          AND created_at >= $2
          AND created_at < $3
+         ${dailyAgentFilter}
        GROUP BY bucket_date
        ORDER BY bucket_date ASC`,
-      [workspaceId, fromIso, toIso, tz],
+      [workspaceId, fromIso, toIso, tz, ...agentParams],
     );
 
     // 4. Usage breakdown by service/model without artificial token ratio
@@ -148,10 +155,89 @@ export class AnalyticsRepository {
        WHERE workspace_id = $1
          AND created_at >= $2
          AND created_at < $3
+         ${agentFilter}
        GROUP BY kind, provider, model, unit_label
        ORDER BY SUM(price_micros) DESC, SUM(units) DESC`,
-      [workspaceId, fromIso, toIso],
+      [workspaceId, fromIso, toIso, ...agentParams],
     );
+
+    // Operational metrics are sourced from conversation/evaluation tables when
+    // those services have been migrated. Keep analytics usable during staggered
+    // local/rolling deployments where one of those tables may not exist yet.
+    let operationalMetrics: AnalyticsResponse["operational_metrics"];
+    try {
+      const operationsAgentFilter = opts.agentId ? "AND c.agent_id = $4" : "";
+      const operationsParams = opts.agentId
+        ? [workspaceId, fromIso, toIso, opts.agentId]
+        : [workspaceId, fromIso, toIso];
+      const operationsRes = await this.pool.query<{
+        tool_calls: string;
+        successful_tool_calls: string;
+        failed_tool_calls: string;
+        handoffs: string;
+        evaluation_runs: string;
+        evaluation_pass_rate_pct: string | null;
+      }>(
+        `SELECT
+           (SELECT COUNT(*)::text
+              FROM tool_calls tc
+              JOIN conversations c ON c.id = tc.conversation_id AND c.workspace_id = tc.workspace_id
+             WHERE tc.workspace_id = $1
+               AND tc.created_at >= $2
+               AND tc.created_at < $3
+               ${operationsAgentFilter}) AS tool_calls,
+           (SELECT COUNT(*) FILTER (WHERE tc.status IN ('succeeded', 'success'))::text
+              FROM tool_calls tc
+              JOIN conversations c ON c.id = tc.conversation_id AND c.workspace_id = tc.workspace_id
+             WHERE tc.workspace_id = $1
+               AND tc.created_at >= $2
+               AND tc.created_at < $3
+               ${operationsAgentFilter}) AS successful_tool_calls,
+           (SELECT COUNT(*) FILTER (WHERE tc.status IN ('failed', 'error'))::text
+              FROM tool_calls tc
+              JOIN conversations c ON c.id = tc.conversation_id AND c.workspace_id = tc.workspace_id
+             WHERE tc.workspace_id = $1
+               AND tc.created_at >= $2
+               AND tc.created_at < $3
+               ${operationsAgentFilter}) AS failed_tool_calls,
+           (SELECT COUNT(*) FILTER (WHERE c.state IN ('waiting', 'human'))::text
+              FROM conversations c
+             WHERE c.workspace_id = $1
+               AND c.updated_at >= $2
+               AND c.updated_at < $3
+               ${opts.agentId ? "AND c.agent_id = $4" : ""}) AS handoffs,
+           (SELECT COUNT(*) FILTER (WHERE er.status = 'completed')::text
+              FROM eval_runs er
+             WHERE er.workspace_id = $1
+               AND er.created_at >= $2
+               AND er.created_at < $3
+               ${opts.agentId ? "AND er.agent_id = $4" : ""}) AS evaluation_runs,
+           (SELECT AVG(er.score) FILTER (WHERE er.status = 'completed')::text
+              FROM eval_runs er
+             WHERE er.workspace_id = $1
+               AND er.created_at >= $2
+               AND er.created_at < $3
+               ${opts.agentId ? "AND er.agent_id = $4" : ""}) AS evaluation_pass_rate_pct`,
+        operationsParams,
+      );
+      const row = operationsRes.rows[0];
+      const toolCalls = Number(row?.tool_calls ?? 0);
+      const successfulToolCalls = Number(row?.successful_tool_calls ?? 0);
+      operationalMetrics = {
+        tool_calls: toolCalls,
+        successful_tool_calls: successfulToolCalls,
+        failed_tool_calls: Number(row?.failed_tool_calls ?? 0),
+        tool_success_rate_pct:
+          toolCalls > 0 ? Math.round((successfulToolCalls / toolCalls) * 1000) / 10 : null,
+        handoffs: Number(row?.handoffs ?? 0),
+        evaluation_runs: Number(row?.evaluation_runs ?? 0),
+        evaluation_pass_rate_pct: row?.evaluation_pass_rate_pct
+          ? Math.round(Number(row.evaluation_pass_rate_pct) * 10) / 10
+          : null,
+      };
+    } catch {
+      operationalMetrics = undefined;
+    }
 
     const sRow = summaryRes.rows[0];
     const pRow = priorRes.rows[0];
@@ -181,9 +267,7 @@ export class AnalyticsRepository {
     };
 
     // Build contiguous daily map
-    const dailyMap = new Map(
-      dailyRes.rows.map((r) => [r.bucket_date, r]),
-    );
+    const dailyMap = new Map(dailyRes.rows.map((r) => [r.bucket_date, r]));
 
     const dailyTokens: AnalyticsDailyTokenBucket[] = [];
     const dailyLatency: AnalyticsDailyLatencyBucket[] = [];
@@ -228,7 +312,7 @@ export class AnalyticsRepository {
       const isVoice = r.kind === "voice";
       const isAcquisition = r.kind === "acquisition";
       let serviceName = r.model ?? r.provider ?? r.kind;
-      let unitLabel = r.unit_label ?? (isVoice ? "minutes" : isAcquisition ? "units" : "tokens");
+      const unitLabel = r.unit_label ?? (isVoice ? "minutes" : isAcquisition ? "units" : "tokens");
       if (isVoice && !r.model) {
         serviceName = "voice-telephony";
       }
@@ -300,6 +384,7 @@ export class AnalyticsRepository {
       daily_tokens: dailyTokens,
       daily_latency: dailyLatency,
       usage_by_service: usageByService,
+      ...(operationalMetrics ? { operational_metrics: operationalMetrics } : {}),
       previous_period: {
         from: priorFromIso.slice(0, 10),
         to: priorToIso.slice(0, 10),
@@ -310,4 +395,3 @@ export class AnalyticsRepository {
     };
   }
 }
-

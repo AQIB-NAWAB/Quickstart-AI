@@ -5,9 +5,10 @@ import type { VoiceHttpContext } from "../context.js";
 
 export const createCallsRoutes: RouteModule<VoiceHttpContext> = (ctx) => {
   const router = createServiceRouter();
-  const { authGuard, tenantGuard, workspaceAccess, callsCtrl } = ctx;
+  const { authGuard, tenantGuard, workspaceAccess, callsCtrl, inboundCallsCtrl } = ctx;
   const tenant = [authGuard, tenantGuard];
   const read = requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.VOICE_CALLS_READ);
+  const manage = requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.VOICE_CALLS_MANAGE);
   const listenRecording = requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.VOICE_RECORDINGS_LISTEN);
 
   router.get(
@@ -27,6 +28,18 @@ export const createCallsRoutes: RouteModule<VoiceHttpContext> = (ctx) => {
     ...tenant,
     read,
     asyncHandler(callsCtrl.listLiveInbound),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/voice/inbound/simulate",
+    ...tenant,
+    manage,
+    asyncHandler(callsCtrl.simulateInbound),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/voice/inbound/:callId/stop",
+    ...tenant,
+    manage,
+    asyncHandler(inboundCallsCtrl.staffStopCall),
   );
   router.get(
     "/v1/workspaces/:workspaceId/voice/inbound/:callId",

@@ -11,6 +11,7 @@ import { AppError, ErrorCode } from "@quickstart/errors";
 export class GraphSessionStore {
   private memorySessions = new Map<string, GraphSessionState>();
   private memoryExecutionTraces = new Map<string, GraphExecutionTrace>();
+  private memoryTraceExpiry = new Map<string, number>();
   private listeners = new Map<string, Set<(event: GraphTraceEvent) => void>>();
   private memoryTurns = new Map<string, string>();
   private locks = new Set<string>();
@@ -20,6 +21,9 @@ export class GraphSessionStore {
   }
   private runKey(workspaceId: string, runId: string) {
     return `flow:run:${workspaceId}:${runId}`;
+  }
+  private agentRunsKey(workspaceId: string, agentId: string) {
+    return `flow:agent:${workspaceId}:${agentId}:runs`;
   }
 
   async withSessionLock<T>(
@@ -115,21 +119,51 @@ export class GraphSessionStore {
       }
     }
   }
-  async saveTrace(trace: GraphExecutionTrace, workspaceId: string): Promise<void> {
+  async saveTrace(
+    trace: GraphExecutionTrace,
+    workspaceId: string,
+    retentionSeconds = 86400,
+  ): Promise<void> {
+    const ttl = Math.min(30 * 86400, Math.max(60, Math.trunc(retentionSeconds)));
     const key = this.runKey(workspaceId, trace.run_id);
     if (this.redis) {
       await this.redis
         .multi()
-        .set(key, JSON.stringify(trace), { EX: 86400 })
+        .set(key, JSON.stringify(trace), { EX: ttl })
         .rPush(`${this.key(workspaceId, trace.session_id)}:runs`, trace.run_id)
         .lTrim(`${this.key(workspaceId, trace.session_id)}:runs`, -100, -1)
-        .expire(`${this.key(workspaceId, trace.session_id)}:runs`, 86400)
+        .expire(`${this.key(workspaceId, trace.session_id)}:runs`, ttl)
+        .rPush(
+          trace.agent_id
+            ? this.agentRunsKey(workspaceId, trace.agent_id)
+            : `${this.key(workspaceId, trace.session_id)}:agent-runs`,
+          trace.run_id,
+        )
+        .lTrim(
+          trace.agent_id
+            ? this.agentRunsKey(workspaceId, trace.agent_id)
+            : `${this.key(workspaceId, trace.session_id)}:agent-runs`,
+          -100,
+          -1,
+        )
+        .expire(
+          trace.agent_id
+            ? this.agentRunsKey(workspaceId, trace.agent_id)
+            : `${this.key(workspaceId, trace.session_id)}:agent-runs`,
+          ttl,
+        )
         .exec();
       return;
     }
     this.memoryExecutionTraces.set(key, structuredClone(trace));
+    this.memoryTraceExpiry.set(key, Date.now() + ttl * 1000);
     if (this.memoryExecutionTraces.size > 1000)
-      this.memoryExecutionTraces.delete(this.memoryExecutionTraces.keys().next().value!);
+      this.deleteMemoryTrace(this.memoryExecutionTraces.keys().next().value!);
+  }
+
+  private deleteMemoryTrace(key: string) {
+    this.memoryExecutionTraces.delete(key);
+    this.memoryTraceExpiry.delete(key);
   }
   async getTrace(workspaceId: string, runId: string): Promise<GraphExecutionTrace | null> {
     const key = this.runKey(workspaceId, runId);
@@ -137,6 +171,8 @@ export class GraphSessionStore {
       const raw = await this.redis.get(key);
       return raw ? (JSON.parse(raw) as GraphExecutionTrace) : null;
     }
+    const expiresAt = this.memoryTraceExpiry.get(key);
+    if (expiresAt !== undefined && expiresAt <= Date.now()) this.deleteMemoryTrace(key);
     return structuredClone(this.memoryExecutionTraces.get(key) ?? null);
   }
   async listTraces(
@@ -153,8 +189,29 @@ export class GraphSessionStore {
     const prefix = this.runKey(workspaceId, "");
     return structuredClone(
       [...this.memoryExecutionTraces]
+        .filter(([key]) => (this.memoryTraceExpiry.get(key) ?? Infinity) > Date.now())
         .filter(([key, t]) => key.startsWith(prefix) && t.session_id === sessionId)
         .map(([, t]) => t)
+        .slice(-limit),
+    );
+  }
+  async listAgentTraces(
+    workspaceId: string,
+    agentId: string,
+    limit = 20,
+  ): Promise<GraphExecutionTrace[]> {
+    limit = Number.isFinite(limit) ? Math.min(100, Math.max(1, Math.trunc(limit))) : 20;
+    if (this.redis) {
+      const ids = await this.redis.lRange(this.agentRunsKey(workspaceId, agentId), -limit, -1);
+      const traces = await Promise.all(ids.map((id) => this.getTrace(workspaceId, id)));
+      return traces.filter((t): t is GraphExecutionTrace => t !== null);
+    }
+    const prefix = this.runKey(workspaceId, "");
+    return structuredClone(
+      [...this.memoryExecutionTraces]
+        .filter(([key]) => (this.memoryTraceExpiry.get(key) ?? Infinity) > Date.now())
+        .filter(([key, trace]) => key.startsWith(prefix) && trace.agent_id === agentId)
+        .map(([, trace]) => trace)
         .slice(-limit),
     );
   }

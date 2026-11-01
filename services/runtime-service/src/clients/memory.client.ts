@@ -59,4 +59,37 @@ export class MemoryClient {
       return [];
     }
   }
+
+  async rememberFact(
+    workspaceId: string,
+    subjectKey: string,
+    factKey: string,
+    factText: string,
+    requestId: string,
+  ): Promise<void> {
+    const url = `${this.options.baseUrl}/internal/workspaces/${encodeURIComponent(workspaceId)}/memory/facts`;
+    try {
+      const res = await fetchWithPolicy(
+        url,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${this.options.internalToken}`,
+            "content-type": "application/json",
+            "x-request-id": requestId,
+          },
+          body: JSON.stringify({ subject_key: subjectKey, fact_key: factKey, fact_text: factText }),
+        },
+        { timeoutMs: Math.min(this.options.timeoutMs, 1000), maxRetries: 0 },
+      );
+      if (!res.ok) {
+        this.options.logger?.warn("memory.write_degraded", { requestId, status: res.status });
+      }
+    } catch (error) {
+      this.options.logger?.warn("memory.write_degraded", {
+        requestId,
+        detail: error instanceof Error ? error.message : "unknown",
+      });
+    }
+  }
 }

@@ -11,7 +11,7 @@ import {
   X,
 } from "lucide-react";
 import type { Agent } from "../lib/types";
-import { deleteAgent } from "../lib/client";
+import { archiveAgent, deleteAgent, listAgents } from "../lib/client";
 import { AgentCard } from "./agent-card";
 import { CreateAgentDialog } from "./create-agent-dialog";
 import { TestAgentPanel } from "./test-agent-panel";
@@ -20,6 +20,7 @@ type Props = {
   workspaceId: string;
   workspaceName?: string;
   initialAgents: Agent[];
+  initialNextCursor?: string | null;
 };
 
 type StatusFilter = "all" | "published" | "unpublished";
@@ -33,12 +34,15 @@ function CreateQueryOpener({ onOpen }: { onOpen: () => void }) {
   return null;
 }
 
-export function AgentList({ workspaceId, workspaceName = "Workspace", initialAgents }: Props) {
+export function AgentList({ workspaceId, workspaceName = "Workspace", initialAgents, initialNextCursor = null }: Props) {
   const router = useRouter();
   const [agents, setAgents] = useState<Agent[]>(initialAgents);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+  const [showArchived, setShowArchived] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(initialNextCursor);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // Create wizard state
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -90,6 +94,26 @@ export function AgentList({ workspaceId, workspaceName = "Workspace", initialAge
       return true;
     }
     return false;
+  }
+
+  async function reloadAgents(includeArchived: boolean) {
+    setIsLoadingMore(true);
+    const result = await listAgents(workspaceId, { limit: 50, includeArchived });
+    setIsLoadingMore(false);
+    if (result.error) return;
+    setAgents(result.agents ?? []);
+    setNextCursor(result.nextCursor ?? null);
+  }
+
+  async function handleArchiveAgent(agentId: string, archived: boolean): Promise<boolean> {
+    const result = await archiveAgent(workspaceId, agentId, archived);
+    if (result.error || !result.agent) return false;
+    if (showArchived) {
+      setAgents((prev) => prev.map((agent) => (agent.id === agentId ? result.agent! : agent)));
+    } else if (archived) {
+      setAgents((prev) => prev.filter((agent) => agent.id !== agentId));
+    }
+    return true;
   }
 
   return (
@@ -159,6 +183,22 @@ export function AgentList({ workspaceId, workspaceName = "Workspace", initialAge
             </select>
             <ChevronDown className="w-3.5 h-3.5 text-[#667085] absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const next = !showArchived;
+              setShowArchived(next);
+              void reloadAgents(next);
+            }}
+            className={`h-10 px-3 rounded-[6px] border text-[13px] font-medium transition-colors ${
+              showArchived
+                ? "border-[#FF571A] bg-orange-50 text-[#C43F0E]"
+                : "border-[#DCE1E8] bg-white text-[#475467] hover:bg-[#F8F9FA]"
+            }`}
+          >
+            {showArchived ? "Hide archived" : "Show archived"}
+          </button>
 
           {/* Sort order toggle */}
           <button
@@ -232,6 +272,7 @@ export function AgentList({ workspaceId, workspaceName = "Workspace", initialAge
                 workspaceId={workspaceId}
                 onTestAgent={(a) => setActiveTestingAgent(a)}
                 onDeleteAgent={handleDeleteAgent}
+                onArchiveAgent={handleArchiveAgent}
               />
             ))}
           </div>
@@ -245,6 +286,31 @@ export function AgentList({ workspaceId, workspaceName = "Workspace", initialAge
             {filteredAndSortedAgents.length}{" "}
             {filteredAndSortedAgents.length === 1 ? "agent" : "agents"} in {workspaceName}
           </span>
+        </div>
+      )}
+
+      {nextCursor && (
+        <div className="flex justify-center pt-2">
+          <button
+            type="button"
+            disabled={isLoadingMore}
+            onClick={async () => {
+              if (!nextCursor) return;
+              setIsLoadingMore(true);
+              const result = await listAgents(workspaceId, {
+                limit: 50,
+                cursor: nextCursor,
+                includeArchived: showArchived,
+              });
+              setIsLoadingMore(false);
+              if (result.error) return;
+              setAgents((prev) => [...prev, ...(result.agents ?? [])]);
+              setNextCursor(result.nextCursor ?? null);
+            }}
+            className="px-4 py-2 rounded-[6px] border border-[#DCE1E8] bg-white text-[14px] font-medium text-[#202125] hover:bg-[#F8F9FA] disabled:opacity-50"
+          >
+            {isLoadingMore ? "Loading..." : "Load more agents"}
+          </button>
         </div>
       )}
 

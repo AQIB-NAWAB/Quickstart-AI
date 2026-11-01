@@ -82,6 +82,7 @@ export type CapturedFieldDefinition = {
   required: boolean;
   field_name?: string;
   description?: string;
+  allowed_values?: string[];
 };
 
 export type ConversationNodeConfig = {
@@ -158,14 +159,21 @@ export type ConditionNodeConfig = {
 export type AiPromptNodeConfig = {
   instructions?: string;
   system_prompt?: string;
+  inherit_agent_instructions?: boolean;
   model_profile?: string;
+  /** Optional published specialist agent to run this prompt as a delegated step. */
+  delegate_agent_id?: string;
   model_override?: {
     provider?: string;
     model?: string;
     temperature?: number;
     max_tokens?: number;
+    reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+    verbosity?: "low" | "medium" | "high";
   };
   temperature?: number;
+  reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  verbosity?: "low" | "medium" | "high";
   context_variables?: string[];
   conversation_history_window?: number;
   output_variable?: string;
@@ -197,6 +205,7 @@ export type HttpRequestNodeConfig = {
 
 export type KnowledgeSearchNodeConfig = {
   source_ids?: string[];
+  use_all_sources?: boolean;
   query_variable?: string;
   max_results?: number;
   search_method?: "semantic" | "keyword" | "hybrid";
@@ -366,6 +375,9 @@ export type GraphTraceEvent = {
 export type GraphExecutionTrace = {
   run_id: string;
   session_id: string;
+  agent_id?: string;
+  release_id?: string | null;
+  is_preview?: boolean;
   status: "succeeded" | "failed" | "running" | "waiting_for_input";
   total_duration_ms: number;
   duration_ms?: number;

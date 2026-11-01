@@ -34,6 +34,7 @@ export interface SipProvisioner {
   verifyWebhook(rawBody: string, authHeader?: string): Promise<WebhookEvent | null>;
   mintJoinToken(input: { roomName: string; identity: string; name?: string }): Promise<string>;
   removeParticipant(roomName: string, identity: string): Promise<void>;
+  endRoom(roomName: string): Promise<void>;
 }
 
 export const INBOUND_ROOM_PREFIX = "qs-call-";
@@ -177,6 +178,10 @@ export class LiveKitSipProvisioner implements SipProvisioner {
       });
     });
   }
+
+  async endRoom(roomName: string): Promise<void> {
+    await this.api.room.deleteRoom(roomName);
+  }
 }
 
 /**
@@ -224,6 +229,10 @@ export class FakeSipProvisioner implements SipProvisioner {
   async removeParticipant(roomName: string, identity: string): Promise<void> {
     void roomName;
     void identity;
+  }
+
+  async endRoom(roomName: string): Promise<void> {
+    void roomName;
   }
 }
 

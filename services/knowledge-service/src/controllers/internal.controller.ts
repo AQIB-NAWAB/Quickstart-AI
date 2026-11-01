@@ -14,7 +14,13 @@ export function createInternalController(sources: SourcesService, retrieve: Retr
 
     retrieve: (async (req, res) => {
       const requestId = requestIdFromResponse(res);
-      const body = req.body as { workspace_id?: string; query?: string; limit?: number };
+      const body = req.body as {
+        workspace_id?: string;
+        query?: string;
+        limit?: number;
+        source_ids?: string[];
+        search_method?: "semantic" | "keyword" | "hybrid";
+      };
       if (!body.workspace_id) {
         sendPlatformJson(res, 400, {
           request_id: requestId,
@@ -26,6 +32,8 @@ export function createInternalController(sources: SourcesService, retrieve: Retr
         workspaceId: body.workspace_id,
         query: body.query ?? "",
         limit: body.limit,
+        sourceIds: body.source_ids,
+        searchMethod: body.search_method,
       });
       sendPlatformJson(res, 200, { request_id: requestId, ...result });
     }) as RequestHandler,

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { normalizeAgentGraph } from "@quickstart/contracts";
+import { createDefaultAgentGraph, normalizeAgentGraph } from "@quickstart/contracts";
 import type {
   AgentGraph,
   GraphExecutionTrace,
@@ -59,24 +59,32 @@ export class GraphTurnsService {
     trace?: GraphExecutionTrace;
   }> {
     const draft = await this.agentClient.getDraftGraph(workspaceId, agentId, authHeaders);
-    if (!draft.graph || !draft.graph.nodes || draft.graph.nodes.length === 0) {
+    const sessionId = `prev_${randomUUID()}`;
+    const agent = await this.agentClient.getAgent(workspaceId, agentId, authHeaders);
+    const graph =
+      draft.graph && draft.graph.nodes.length > 0
+        ? draft.graph
+        : agent.builder_mode === "legacy"
+          ? createDefaultAgentGraph({
+              channels: agent.channels ?? { chat: true, voice: false },
+              knowledge: agent.configuration?.knowledge,
+            })
+          : null;
+    if (!graph || graph.nodes.length === 0) {
       throw new AppError({
         code: ErrorCode.VALIDATION_FAILED,
         message: "Agent does not have a configured canvas graph.",
       });
     }
-
-    const sessionId = `prev_${randomUUID()}`;
-    const agent = await this.agentClient.getAgent(workspaceId, agentId, authHeaders);
     const entryId =
-      draft.graph.entry_node_id || draft.graph.nodes.find((n) => n.type === "entrypoint")?.id || "";
+      graph.entry_node_id || graph.nodes.find((n) => n.type === "entrypoint")?.id || "";
 
     const sessionState: GraphSessionState = {
       session_id: sessionId,
       workspace_id: workspaceId,
       agent_id: agentId,
       release_id: null,
-      graph_snapshot: normalizeAgentGraph(structuredClone(draft.graph)),
+      graph_snapshot: normalizeAgentGraph(structuredClone(graph)),
       agent_defaults: {
         instructions: agent.instructions,
         model_settings: agent.model_settings ?? {},
@@ -109,7 +117,7 @@ export class GraphTurnsService {
         conversationId: sessionId,
         sessionId,
         releaseId: null,
-        graph: draft.graph,
+        graph,
         channel: input.channel ?? "chat",
         isPreview: true,
         authHeaders,
@@ -128,7 +136,7 @@ export class GraphTurnsService {
     return {
       sessionId,
       draftRevision: draft.draft_revision,
-      graph: draft.graph,
+      graph,
       session: updatedSession,
       initialMessages,
       trace: initialTrace,
@@ -240,12 +248,15 @@ export class GraphTurnsService {
 
   async listTraces(
     workspaceId: string,
-    sessionId: string,
+    sessionId: string | undefined,
     limit: number | undefined,
     agentId: string,
   ): Promise<GraphExecutionTrace[]> {
-    await this.authorizePreviewSession(workspaceId, agentId, sessionId);
-    return this.sessionStore.listTraces(workspaceId, sessionId, limit);
+    if (sessionId) {
+      await this.authorizePreviewSession(workspaceId, agentId, sessionId);
+      return this.sessionStore.listTraces(workspaceId, sessionId, limit);
+    }
+    return this.sessionStore.listAgentTraces(workspaceId, agentId, limit);
   }
 
   subscribeTrace(

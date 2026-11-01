@@ -1,4 +1,4 @@
-import type { AgentGraph } from "@quickstart/contracts";
+import type { AgentConfiguration, AgentGraph } from "@quickstart/contracts";
 
 export type AgentChannels = {
   chat: boolean;
@@ -30,6 +30,13 @@ export type AgentToolDefinitionBase = {
   parameters?: ToolParameterSchema;
   timeout_ms?: number;
   idempotent?: boolean;
+  policy?: {
+    enabled?: boolean;
+    allowed_channels?: Array<"chat" | "voice" | "webhook">;
+    confirmation?: "never" | "user" | "staff";
+    risk?: "read" | "write";
+    max_calls_per_turn?: number;
+  };
 };
 
 export type AgentHttpToolDefinition = AgentToolDefinitionBase & {
@@ -68,13 +75,7 @@ export type AgentBuiltinCalendarToolDefinition = AgentToolDefinitionBase & {
 };
 
 export type AgentBuiltinIntegrationProvider =
-  | "zendesk"
-  | "slack"
-  | "hubspot"
-  | "salesforce"
-  | "google_sheets"
-  | "mailchimp"
-  | "twilio";
+  "zendesk" | "slack" | "hubspot" | "salesforce" | "google_sheets" | "mailchimp" | "twilio";
 
 export type AgentBuiltinIntegrationAction =
   | "create_ticket"
@@ -109,6 +110,7 @@ export type AgentSnapshot = {
   model_settings: Record<string, unknown>;
   channels: AgentChannels;
   tools: AgentToolDefinition[];
+  configuration: AgentConfiguration;
   draft_version: number;
   graph?: AgentGraph;
   builder_mode?: "legacy" | "canvas";
@@ -133,14 +135,20 @@ export type Agent = {
   model_settings: Record<string, unknown>;
   channels: AgentChannels;
   tools: AgentToolDefinition[];
+  configuration?: AgentConfiguration;
   voice?: AgentVoiceSettings;
   version: number;
   draft_revision?: number;
   builder_mode?: "legacy" | "canvas";
   draft_graph?: AgentGraph | null;
   production_version_id: string | null;
+  scheduled_version_id?: string | null;
+  scheduled_publish_at?: string | null;
+  canary_version_id: string | null;
+  canary_percentage: number;
   created_at: string;
   updated_at: string;
+  archived_at?: string | null;
 };
 
 export type AgentVersion = {

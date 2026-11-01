@@ -66,6 +66,8 @@ const previewAgents: Agent[] = [
     tools: [],
     version: 1,
     production_version_id: "preview-release-1",
+    canary_version_id: null,
+    canary_percentage: 0,
     created_at: date,
     updated_at: date,
   },
@@ -149,7 +151,8 @@ export function FrontendPreview({ view }: { view: string[] }) {
       // This development-only visual preview never sends API requests to real services.
       if (method === "POST" && url.pathname.endsWith("/summary")) {
         return reply({
-          summary: "The visitor asked about pricing. The agent shared an overview and offered help choosing a plan.",
+          summary:
+            "The visitor asked about pricing. The agent shared an overview and offered help choosing a plan.",
           ready: true,
         });
       }
@@ -175,9 +178,7 @@ export function FrontendPreview({ view }: { view: string[] }) {
         });
       if (path.startsWith(conversationPrefix + "/")) {
         const conversationId = path.slice(conversationPrefix.length + 1).split("/")[0];
-        const conversation = previewConversations.find(
-          (item) => item.id === conversationId,
-        );
+        const conversation = previewConversations.find((item) => item.id === conversationId);
         if (!conversation) return reply({ error: { message: "Conversation not found" } }, 404);
         if (path.endsWith("/take")) {
           conversation.state = "human";
@@ -234,8 +235,7 @@ export function FrontendPreview({ view }: { view: string[] }) {
                     seq: 2,
                     sender_type: "assistant",
                     sender_id: "support-assistant",
-                    text:
-                      "Our plans depend on your team's needs. You can explore the options on our pricing page, or I can help you find the right fit.",
+                    text: "Our plans depend on your team's needs. You can explore the options on our pricing page, or I can help you find the right fit.",
                     idempotency_key: "preview-1",
                     created_at: "2026-10-15T10:42:00.000Z",
                   },
@@ -290,24 +290,66 @@ export function FrontendPreview({ view }: { view: string[] }) {
       if (path.endsWith("/secrets")) return reply({ secrets });
       if (path.endsWith("/publishable-keys")) return reply({ publishable_keys: widgetKeys });
       if (path === `/api/workspaces/${workspace.id}/voice/catalog`)
-        return reply({ voices: [
-          ["uplift:v_8eelc901", "uplift", "Uplift Info", "ur-PK", "Clear Urdu, education and support."],
-          ["uplift:v_30s70t3a", "uplift", "Uplift News", "ur-PK", "Pakistani news cadence."],
-          ["uplift:v_meklc281", "uplift", "Uplift Urdu", "ur-PK", "Urdu female conversational voice."],
-          ["cartesia:6c756032-11c3-4be8-a120-74f9673fb700", "cartesia", "Cartesia Harlow", "en", "Warm English support voice."],
-          ["cartesia:d463004e-0353-4063-80d4-2fabbf1c5dcb", "cartesia", "Cartesia Hina", "ur", "Urdu, steady and clear."],
-          ["fish:reference", "fish", "Fish reference", "en", "Custom workspace voice."],
-        ].map(([id, provider, label, language, description]) => ({ id, provider, label, language, description, available: false, sample_text: "Hello. How can I help?" })) });
+        return reply({
+          voices: [
+            [
+              "uplift:v_8eelc901",
+              "uplift",
+              "Uplift Info",
+              "ur-PK",
+              "Clear Urdu, education and support.",
+            ],
+            ["uplift:v_30s70t3a", "uplift", "Uplift News", "ur-PK", "Pakistani news cadence."],
+            [
+              "uplift:v_meklc281",
+              "uplift",
+              "Uplift Urdu",
+              "ur-PK",
+              "Urdu female conversational voice.",
+            ],
+            [
+              "cartesia:6c756032-11c3-4be8-a120-74f9673fb700",
+              "cartesia",
+              "Cartesia Harlow",
+              "en",
+              "Warm English support voice.",
+            ],
+            [
+              "cartesia:d463004e-0353-4063-80d4-2fabbf1c5dcb",
+              "cartesia",
+              "Cartesia Hina",
+              "ur",
+              "Urdu, steady and clear.",
+            ],
+            ["fish:reference", "fish", "Fish reference", "en", "Custom workspace voice."],
+          ].map(([id, provider, label, language, description]) => ({
+            id,
+            provider,
+            label,
+            language,
+            description,
+            available: false,
+            sample_text: "Hello. How can I help?",
+          })),
+        });
       if (path === `/api/workspaces/${workspace.id}/agents`)
         return reply({ agents: previewAgents });
       if (path === `/api/workspaces/${workspace.id}/agents/support-assistant`)
         return reply({ agent: previewAgents[0] });
       if (path === `/api/workspaces/${workspace.id}/agents/support-assistant/versions`)
-        return reply({ versions: [{
-          id: "preview-release-1", workspace_id: workspace.id, agent_id: "support-assistant",
-          release_number: 1, created_by: "preview-owner", created_at: date,
-          snapshot: { ...previewAgents[0], draft_version: 1 },
-        }] });
+        return reply({
+          versions: [
+            {
+              id: "preview-release-1",
+              workspace_id: workspace.id,
+              agent_id: "support-assistant",
+              release_number: 1,
+              created_by: "preview-owner",
+              created_at: date,
+              snapshot: { ...previewAgents[0], draft_version: 1 },
+            },
+          ],
+        });
       if (path === `/api/workspaces/${workspace.id}`) return reply({ workspace });
       return reply({ error: { message: "Unavailable in visual preview" } }, 404);
     };
@@ -405,7 +447,6 @@ export function FrontendPreview({ view }: { view: string[] }) {
       <AppShell
         workspaceId={workspace.id}
         workspaceName={workspace.name}
-        workspaceSlug={workspace.slug}
         userEmail="quickstart@gmail.com"
         workspaces={[workspace]}
         isPreview={true}
@@ -441,7 +482,11 @@ export function FrontendPreview({ view }: { view: string[] }) {
           <EvaluationPreviewView view={view} />
         ) : view[0] === "agents" ? (
           !view[1] ? (
-            <AgentList workspaceId={workspace.id} workspaceName={workspace.name} initialAgents={previewAgents} />
+            <AgentList
+              workspaceId={workspace.id}
+              workspaceName={workspace.name}
+              initialAgents={previewAgents}
+            />
           ) : view[1] === "new" ? (
             <CreateAgentForm workspaceId={workspace.id} isPreview />
           ) : view[1] === "support-assistant" ? (

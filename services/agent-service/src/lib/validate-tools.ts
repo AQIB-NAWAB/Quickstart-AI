@@ -203,6 +203,36 @@ export function validateAgentTools(tools: AgentToolDefinition[]): AgentToolDefin
         message: `tool timeout_ms must be between 1000 and ${MAX_TOOL_TIMEOUT_MS}`,
       });
     }
+    if (raw.policy) {
+      const policy = raw.policy;
+      if (
+        policy.max_calls_per_turn !== undefined &&
+        (!Number.isInteger(policy.max_calls_per_turn) || policy.max_calls_per_turn < 1 || policy.max_calls_per_turn > 20)
+      ) {
+        throw new AppError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message: "tool policy max_calls_per_turn must be an integer between 1 and 20",
+        });
+      }
+      if (policy.allowed_channels?.some((channel) => !["chat", "voice", "webhook"].includes(channel))) {
+        throw new AppError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message: "tool policy contains an unsupported channel",
+        });
+      }
+      if (policy.confirmation && !["never", "user", "staff"].includes(policy.confirmation)) {
+        throw new AppError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message: "tool policy confirmation must be never, user, or staff",
+        });
+      }
+      if (policy.risk && !["read", "write"].includes(policy.risk)) {
+        throw new AppError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message: "tool policy risk must be read or write",
+        });
+      }
+    }
     const tool = {
       ...raw,
       name,

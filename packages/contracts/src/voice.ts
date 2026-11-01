@@ -6,13 +6,7 @@ export type VoiceMode = (typeof VOICE_MODES)[number];
 export const CALL_DIRECTIONS = ["inbound", "outbound"] as const;
 export type CallDirection = (typeof CALL_DIRECTIONS)[number];
 
-export const CALL_STATES = [
-  "ringing",
-  "live",
-  "completed",
-  "failed",
-  "transferred",
-] as const;
+export const CALL_STATES = ["ringing", "live", "completed", "failed", "transferred"] as const;
 export type CallState = (typeof CALL_STATES)[number];
 
 export const TELEPHONY_PROVIDER_IDS = ["twilio", "telnyx", "sip", "fake"] as const;
@@ -197,14 +191,16 @@ export function isCallState(value: unknown): value is CallState {
 }
 
 /**
- * S2S profiles may not enable tools or RAG (v1). Cascade is required for tool-heavy agents.
+ * Tools/RAG require a native realtime session with the shared runtime bridge.
+ * Legacy batch S2S adapters must keep the restrictive default.
  */
 export function s2sProfileAllowed(input: {
   voice_mode: VoiceMode;
   toolsCount: number;
   knowledgeEnabled: boolean;
+  runtimeBridge?: boolean;
 }): { ok: true } | { ok: false; reason: string } {
-  if (input.voice_mode !== "s2s") {
+  if (input.voice_mode !== "s2s" || input.runtimeBridge === true) {
     return { ok: true };
   }
   if (input.toolsCount > 0) {

@@ -9,7 +9,10 @@ import type {
 } from "./types";
 import type { AnalyticsResponse } from "@quickstart/contracts";
 
-export function createUsageLedgerDataSource(workspaceId: string): AnalyticsDataSource {
+export function createUsageLedgerDataSource(
+  workspaceId: string,
+  agentId?: string,
+): AnalyticsDataSource {
   return {
     async fetchAnalytics(range: DateRange, signal?: AbortSignal): Promise<AnalyticsResult> {
       try {
@@ -18,6 +21,7 @@ export function createUsageLedgerDataSource(workspaceId: string): AnalyticsDataS
           to: range.to,
           timezone: range.timezone,
         });
+        if (agentId) params.set("agent_id", agentId);
 
         const res = await fetch(
           `/api/workspaces/${encodeURIComponent(workspaceId)}/analytics?${params.toString()}`,
@@ -81,6 +85,17 @@ export function createUsageLedgerDataSource(workspaceId: string): AnalyticsDataS
               estimatedCostUsd: u.estimated_cost_usd,
               isUnpriced: u.is_unpriced,
             })),
+            operationalMetrics: payload.operational_metrics
+              ? {
+                  toolCalls: payload.operational_metrics.tool_calls,
+                  successfulToolCalls: payload.operational_metrics.successful_tool_calls,
+                  failedToolCalls: payload.operational_metrics.failed_tool_calls,
+                  toolSuccessRatePct: payload.operational_metrics.tool_success_rate_pct,
+                  handoffs: payload.operational_metrics.handoffs,
+                  evaluationRuns: payload.operational_metrics.evaluation_runs,
+                  evaluationPassRatePct: payload.operational_metrics.evaluation_pass_rate_pct,
+                }
+              : undefined,
             models: payload.usage_by_service
               .filter((u) => u.kind === "model")
               .map((u) => ({
@@ -107,7 +122,8 @@ export function createUsageLedgerDataSource(workspaceId: string): AnalyticsDataS
               minutes: s.voice_minutes,
               calls: s.voice_calls,
             },
-            latencyDefinition: "Response latency measured from gateway receipt to stream completion.",
+            latencyDefinition:
+              "Response latency measured from gateway receipt to stream completion.",
             coverage: {
               tokens: "complete",
               models: "complete",
@@ -125,7 +141,9 @@ export function createUsageLedgerDataSource(workspaceId: string): AnalyticsDataS
         const errBody = await res.json().catch(() => ({}));
         return {
           status: "unavailable",
-          message: (errBody as { error?: { message?: string } })?.error?.message ?? "Usage reporting unavailable",
+          message:
+            (errBody as { error?: { message?: string } })?.error?.message ??
+            "Usage reporting unavailable",
           description: "Could not retrieve authoritative workspace analytics.",
         };
       } catch (err) {

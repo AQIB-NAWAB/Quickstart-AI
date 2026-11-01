@@ -18,6 +18,7 @@ export function createAnalyticsController(analytics: AnalyticsService) {
         from: q.from,
         to: q.to,
         timezone: q.timezone,
+        agentId: q.agent_id,
       });
       sendPlatformJson(res, 200, {
         request_id: requestIdFromResponse(res),
@@ -32,6 +33,7 @@ export function createAnalyticsController(analytics: AnalyticsService) {
         from: q.from,
         to: q.to,
         timezone: q.timezone,
+        agentId: q.agent_id,
       });
       sendPlatformJson(res, 200, {
         request_id: requestIdFromResponse(res),
@@ -48,6 +50,7 @@ export function createAnalyticsController(analytics: AnalyticsService) {
         from: q.from,
         to: q.to,
         timezone: q.timezone,
+        agentId: q.agent_id,
       });
       sendPlatformJson(res, 200, {
         request_id: requestIdFromResponse(res),
@@ -64,6 +67,7 @@ export function createAnalyticsController(analytics: AnalyticsService) {
         from: q.from,
         to: q.to,
         timezone: q.timezone,
+        agentId: q.agent_id,
       });
       sendPlatformJson(res, 200, {
         request_id: requestIdFromResponse(res),
@@ -81,6 +85,7 @@ export function createAnalyticsController(analytics: AnalyticsService) {
         from: q.from,
         to: q.to,
         timezone: q.timezone,
+        agentId: q.agent_id,
       });
       sendPlatformJson(res, 200, {
         request_id: requestIdFromResponse(res),

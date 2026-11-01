@@ -92,6 +92,7 @@ export class HttpRequestHandler implements GraphNodeHandler<"http_request"> {
         Math.max(1, ctx.deadlineMs - Date.now()),
       ),
       authorization: ctx.authHeaders?.authorization,
+      channel: ctx.channel,
     });
     if (!result.ok && result.status !== "unknown") delete ctx.sessionState.pending_action;
     if (!result.ok)

@@ -47,6 +47,7 @@ export class KnowledgeClient {
     requestId: string,
     limit = 5,
     signal?: AbortSignal,
+    options: { sourceIds?: string[]; searchMethod?: "semantic" | "keyword" | "hybrid" } = {},
   ): Promise<RetrievedChunk[]> {
     const url = `${this.baseUrl}/internal/retrieve`;
     const res = await fetchWithPolicy(
@@ -58,7 +59,13 @@ export class KnowledgeClient {
           "content-type": "application/json",
           "x-request-id": requestId,
         },
-        body: JSON.stringify({ workspace_id: workspaceId, query, limit }),
+        body: JSON.stringify({
+          workspace_id: workspaceId,
+          query,
+          limit,
+          ...(options.sourceIds?.length ? { source_ids: options.sourceIds } : {}),
+          ...(options.searchMethod ? { search_method: options.searchMethod } : {}),
+        }),
         signal,
       },
       { timeoutMs: this.timeoutMs, maxRetries: 0 },

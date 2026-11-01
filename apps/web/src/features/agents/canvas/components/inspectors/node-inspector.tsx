@@ -492,6 +492,12 @@ export const NodeInspector: React.FC<NodeInspectorProps> = (p) => {
         <>
           <Section title="Model & context">
             <Label title="Provider profile">{input("model_profile", "Use agent default")}</Label>
+            <Label
+              title="Delegated specialist agent"
+              hint="Optional published agent used for this step. Leave blank to use this agent."
+            >
+              {input("delegate_agent_id", "Agent UUID")}
+            </Label>
             <Label title="Instructions">{area("system_prompt", 5)}</Label>
             <Label title={`Temperature · ${c.temperature ?? 0.3}`}>
               <input
@@ -503,6 +509,29 @@ export const NodeInspector: React.FC<NodeInspectorProps> = (p) => {
                 value={c.temperature ?? 0.3}
                 onChange={(e) => update("temperature", Number(e.target.value))}
               />
+            </Label>
+            <Label
+              title="Reasoning effort"
+              hint="Use low for fast tool planning, medium or high for complex decisions."
+            >
+              {select("reasoning_effort", [
+                ["auto", "Use agent default"],
+                ["none", "None (fastest)"],
+                ["minimal", "Minimal"],
+                ["low", "Low"],
+                ["medium", "Medium"],
+                ["high", "High"],
+                ["xhigh", "Extra high"],
+                ["max", "Maximum"],
+              ], "auto")}
+            </Label>
+            <Label title="Output verbosity">
+              {select("verbosity", [
+                ["auto", "Use agent default"],
+                ["low", "Low — concise"],
+                ["medium", "Medium — balanced"],
+                ["high", "High — detailed"],
+              ], "auto")}
             </Label>
             <Label title="Context variables">
               <input

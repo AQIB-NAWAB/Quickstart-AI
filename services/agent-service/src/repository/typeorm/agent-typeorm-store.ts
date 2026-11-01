@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { DataSource } from "typeorm";
 import { insertAuditEntry } from "@quickstart/audit-writer";
 import type { TenantContext } from "@quickstart/auth";
-import { DEFAULT_AGENT_VOICE_SETTINGS } from "@quickstart/contracts";
+import {
+  DEFAULT_AGENT_CONFIGURATION,
+  DEFAULT_AGENT_VOICE_SETTINGS,
+  normalizeAgentConfiguration,
+} from "@quickstart/contracts";
 import { AppError, ErrorCode } from "@quickstart/errors";
 import { snapshotFromAgent } from "../../domain/types.js";
 import { diffSnapshots } from "../../utils/version-diff.js";
@@ -36,11 +40,17 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
         channels: input.channels ?? defaultChannels,
         tools: input.tools ?? [],
         voice: input.voice ?? { ...DEFAULT_AGENT_VOICE_SETTINGS },
+        configuration: input.configuration ?? { ...DEFAULT_AGENT_CONFIGURATION },
         builderMode: input.builderMode ?? "legacy",
         draftGraph: input.draftGraph ?? null,
         graphSchemaVersion: 1,
         version: 1,
         productionVersionId: null,
+        scheduledVersionId: null,
+        scheduledPublishAt: null,
+        canaryVersionId: null,
+        canaryPercentage: 0,
+        archivedAt: null,
         createdAt: now,
         updatedAt: now,
       });
@@ -58,12 +68,36 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
       }
     },
 
-    async listAgents(tenant: TenantContext) {
-      const entities = await dataSource.manager.find(AgentEntity, {
-        where: { workspaceId: tenant.workspaceId },
-        order: { createdAt: "ASC" },
-      });
-      return entities.map(toAgent);
+    async listAgents(tenant: TenantContext, options = {}) {
+      const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+      const query = dataSource.manager
+        .createQueryBuilder(AgentEntity, "agent")
+        .where("agent.workspace_id = :workspaceId", { workspaceId: tenant.workspaceId });
+      if (!options.includeArchived) query.andWhere("agent.archived_at IS NULL");
+      if (options.cursor) {
+        const decoded = Buffer.from(options.cursor, "base64url").toString("utf8").split("|");
+        if (decoded.length === 2 && decoded[0] && decoded[1]) {
+          query.andWhere("(agent.created_at, agent.id) > (:createdAt, :id)", {
+            createdAt: decoded[0],
+            id: decoded[1],
+          });
+        }
+      }
+      const entities = await query
+        .orderBy("agent.created_at", "ASC")
+        .addOrderBy("agent.id", "ASC")
+        .take(limit + 1)
+        .getMany();
+      const hasNext = entities.length > limit;
+      const page = entities.slice(0, limit);
+      const last = page.at(-1);
+      return {
+        items: page.map(toAgent),
+        nextCursor:
+          hasNext && last
+            ? Buffer.from(`${last.createdAt.toISOString()}|${last.id}`).toString("base64url")
+            : null,
+      };
     },
 
     async getAgent(tenant: TenantContext, agentId: string) {
@@ -98,6 +132,8 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
       if (input.channels !== undefined) entity.channels = input.channels;
       if (input.tools !== undefined) entity.tools = input.tools;
       if (input.voice !== undefined) entity.voice = input.voice;
+      if (input.configuration !== undefined)
+        entity.configuration = normalizeAgentConfiguration(input.configuration);
       if (input.builderMode !== undefined) entity.builderMode = input.builderMode;
       if (input.draftGraph !== undefined) entity.draftGraph = input.draftGraph;
       if (input.graphSchemaVersion !== undefined)
@@ -124,7 +160,7 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
       agentId: string,
       graph: import("@quickstart/contracts").AgentGraph,
       expectedVersion: number,
-    settings: import("@quickstart/contracts").GraphDraftSettings = {},
+      settings: import("@quickstart/contracts").GraphDraftSettings = {},
     ) {
       const entity = await dataSource.manager.findOne(AgentEntity, {
         where: { id: agentId, workspaceId: tenant.workspaceId },
@@ -142,17 +178,31 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
         });
       }
 
-      const values = { draftGraph: graph, builderMode: "canvas" as const, graphSchemaVersion: graph.schema_version, version: expectedVersion + 1, updatedAt: new Date(),
-          ...(settings.instructions !== undefined ? { instructions: settings.instructions } : {}),
-          ...(settings.model_settings ? { modelSettings: settings.model_settings } : {}),
-          ...(settings.channels ? { channels: settings.channels } : {}),
-          ...(settings.voice ? { voice: settings.voice } : {}),
+      const values = {
+        draftGraph: graph,
+        builderMode: "canvas" as const,
+        graphSchemaVersion: graph.schema_version,
+        version: expectedVersion + 1,
+        updatedAt: new Date(),
+        ...(settings.instructions !== undefined ? { instructions: settings.instructions } : {}),
+        ...(settings.model_settings ? { modelSettings: settings.model_settings } : {}),
+        ...(settings.channels ? { channels: settings.channels } : {}),
+        ...(settings.voice ? { voice: settings.voice } : {}),
       };
-      const changed = await dataSource.manager.update(AgentEntity,
+      const changed = await dataSource.manager.update(
+        AgentEntity,
         { id: agentId, workspaceId: tenant.workspaceId, version: expectedVersion },
-        values as Parameters<typeof dataSource.manager.update<AgentEntity>>[2]);
-      if (!changed.affected) throw new AppError({ code: ErrorCode.CONFLICT, message: "Draft changed while saving. Your local changes have been kept." });
-      const updated = await dataSource.manager.findOneByOrFail(AgentEntity, { id: agentId, workspaceId: tenant.workspaceId });
+        values as Parameters<typeof dataSource.manager.update<AgentEntity>>[2],
+      );
+      if (!changed.affected)
+        throw new AppError({
+          code: ErrorCode.CONFLICT,
+          message: "Draft changed while saving. Your local changes have been kept.",
+        });
+      const updated = await dataSource.manager.findOneByOrFail(AgentEntity, {
+        id: agentId,
+        workspaceId: tenant.workspaceId,
+      });
       return toAgent(updated);
     },
 
@@ -164,11 +214,94 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
       return Boolean(result.affected && result.affected > 0);
     },
 
+    async archiveAgent(tenant: TenantContext, agentId: string, archived: boolean) {
+      const entity = await dataSource.manager.findOne(AgentEntity, {
+        where: { id: agentId, workspaceId: tenant.workspaceId },
+      });
+      if (!entity) throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent not found" });
+      if (
+        archived &&
+        (entity.productionVersionId || entity.canaryVersionId || entity.scheduledVersionId)
+      ) {
+        throw new AppError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message: "Unpublish the live release before archiving this agent",
+        });
+      }
+      entity.archivedAt = archived ? new Date() : null;
+      entity.updatedAt = new Date();
+      await dataSource.manager.save(entity);
+      return toAgent(entity);
+    },
+
+    async setCanary(tenant, agentId, versionId, percentage) {
+      const entity = await dataSource.manager.findOne(AgentEntity, {
+        where: { id: agentId, workspaceId: tenant.workspaceId },
+      });
+      if (!entity) throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent not found" });
+      if (versionId) {
+        const version = await dataSource.manager.findOne(AgentVersionEntity, {
+          where: { id: versionId, agentId, workspaceId: tenant.workspaceId },
+        });
+        if (!version)
+          throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent version not found" });
+      }
+      entity.canaryVersionId = versionId;
+      entity.canaryPercentage = versionId ? percentage : 0;
+      entity.updatedAt = new Date();
+      await dataSource.manager.save(entity);
+      return toAgent(entity);
+    },
+
+    async scheduleRelease(tenant, agentId, versionId, publishAt) {
+      const entity = await dataSource.manager.findOne(AgentEntity, {
+        where: { id: agentId, workspaceId: tenant.workspaceId },
+      });
+      if (!entity) throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent not found" });
+      const version = await dataSource.manager.findOne(AgentVersionEntity, {
+        where: { id: versionId, workspaceId: tenant.workspaceId, agentId },
+      });
+      if (!version)
+        throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent version not found" });
+      if (publishAt.getTime() <= Date.now()) {
+        entity.productionVersionId = versionId;
+        entity.scheduledVersionId = null;
+        entity.scheduledPublishAt = null;
+      } else {
+        entity.scheduledVersionId = versionId;
+        entity.scheduledPublishAt = publishAt;
+      }
+      entity.updatedAt = new Date();
+      await dataSource.manager.save(entity);
+      return toAgent(entity);
+    },
+
+    async applyDueSchedules(now = new Date()) {
+      const entities = await dataSource.manager
+        .createQueryBuilder(AgentEntity, "agent")
+        .where("agent.scheduled_publish_at IS NOT NULL")
+        .andWhere("agent.scheduled_publish_at <= :now", { now })
+        .getMany();
+      for (const entity of entities) {
+        entity.productionVersionId = entity.scheduledVersionId;
+        entity.scheduledVersionId = null;
+        entity.scheduledPublishAt = null;
+        entity.updatedAt = new Date();
+        await dataSource.manager.save(entity);
+      }
+      return entities.length;
+    },
+
     async publish(
       tenant: TenantContext,
       agentId: string,
       baseVersion: number,
-      audit?: { requestId?: string; releaseNotes?: string },
+      audit?: {
+        requestId?: string;
+        releaseNotes?: string;
+        approval?: { approved: boolean; note?: string };
+        completedChecklist?: string[];
+      },
     ) {
       return await dataSource.transaction(async (manager) => {
         const entity = await manager.findOne(AgentEntity, {
@@ -213,6 +346,10 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
         await manager.save(versionEntity);
 
         entity.productionVersionId = versionId;
+        entity.scheduledVersionId = null;
+        entity.scheduledPublishAt = null;
+        entity.canaryVersionId = null;
+        entity.canaryPercentage = 0;
         entity.updatedAt = new Date();
         await manager.save(entity);
 
@@ -228,6 +365,9 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
               agent_version_id: versionId,
               release_number: releaseNumber,
               base_version: baseVersion,
+              approval: audit.approval?.approved === true,
+              approval_note: audit.approval?.note?.slice(0, 500),
+              completed_checklist: audit.completedChecklist ?? [],
             },
           });
         }
@@ -263,6 +403,8 @@ export function createTypeOrmAgentStore(dataSource: DataSource): AgentStore {
         }
 
         entity.productionVersionId = versionId;
+        entity.scheduledVersionId = null;
+        entity.scheduledPublishAt = null;
         entity.updatedAt = new Date();
         await manager.save(entity);
 

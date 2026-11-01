@@ -1,5 +1,7 @@
 import {
   DEFAULT_AGENT_VOICE_SETTINGS,
+  DEFAULT_AGENT_CONFIGURATION,
+  type AgentConfiguration,
   type AgentGraph,
   type AgentToolDefinition,
   type AgentVoiceSettings,
@@ -19,6 +21,7 @@ export type AgentSnapshot = {
   channels: AgentChannels;
   tools: AgentToolDefinition[];
   voice: AgentVoiceSettings;
+  configuration: AgentConfiguration;
   draft_version: number;
   graph?: AgentGraph | null;
   release_notes?: string | null;
@@ -35,8 +38,14 @@ export type Agent = {
   channels: AgentChannels;
   tools: AgentToolDefinition[];
   voice: AgentVoiceSettings;
+  configuration: AgentConfiguration;
+  archivedAt: Date | null;
   version: number;
   productionVersionId: string | null;
+  scheduledVersionId: string | null;
+  scheduledPublishAt: Date | null;
+  canaryVersionId: string | null;
+  canaryPercentage: number;
   builderMode?: "legacy" | "canvas";
   draftGraph?: AgentGraph | null;
   graphSchemaVersion?: number;
@@ -71,6 +80,19 @@ export type PublishResult = {
   agent: Agent;
 };
 
+export type AgentReleaseReadiness = {
+  ready: boolean;
+  blockers: Array<{ code: string; message: string }>;
+  warnings: string[];
+};
+
+export type AgentEnvironmentComparison = {
+  draft: AgentSnapshot;
+  staging: AgentVersion | null;
+  production: AgentVersion | null;
+  canary: AgentVersion | null;
+};
+
 export type AgentJson = {
   id: string;
   workspace_id: string;
@@ -82,13 +104,19 @@ export type AgentJson = {
   channels: AgentChannels;
   tools: AgentToolDefinition[];
   voice: AgentVoiceSettings;
+  configuration: AgentConfiguration;
   version: number;
   production_version_id: string | null;
+  scheduled_version_id: string | null;
+  scheduled_publish_at: string | null;
+  canary_version_id: string | null;
+  canary_percentage: number;
   builder_mode?: "legacy" | "canvas";
   draft_graph?: AgentGraph | null;
   graph_schema_version?: number;
   created_at: string;
   updated_at: string;
+  archived_at: string | null;
 };
 
 export type AgentVersionJson = {
@@ -112,6 +140,7 @@ export function snapshotFromAgent(agent: Agent, releaseNotes?: string | null): A
     channels: agent.channels,
     tools: agent.tools,
     voice: agent.voice ?? { ...DEFAULT_AGENT_VOICE_SETTINGS },
+    configuration: agent.configuration ?? { ...DEFAULT_AGENT_CONFIGURATION },
     draft_version: agent.version,
     graph: agent.draftGraph ?? null,
     release_notes: releaseNotes ?? null,
@@ -132,11 +161,17 @@ export function toAgentJson(agent: Agent): AgentJson {
     voice: agent.voice ?? { ...DEFAULT_AGENT_VOICE_SETTINGS },
     version: agent.version,
     production_version_id: agent.productionVersionId,
+    scheduled_version_id: agent.scheduledVersionId,
+    scheduled_publish_at: agent.scheduledPublishAt?.toISOString() ?? null,
+    canary_version_id: agent.canaryVersionId,
+    canary_percentage: agent.canaryPercentage,
     builder_mode: agent.builderMode ?? "legacy",
     draft_graph: agent.draftGraph ?? null,
     graph_schema_version: agent.graphSchemaVersion ?? 1,
     created_at: agent.createdAt.toISOString(),
     updated_at: agent.updatedAt.toISOString(),
+    configuration: agent.configuration,
+    archived_at: agent.archivedAt?.toISOString() ?? null,
   };
 }
 

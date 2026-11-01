@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_VOICE_SETTINGS } from "@quickstart/contracts";
+import { DEFAULT_AGENT_VOICE_SETTINGS, normalizeAgentConfiguration } from "@quickstart/contracts";
 import type { CustomTool } from "@quickstart/contracts";
 import type { Agent, AgentVersion } from "../../domain/types.js";
 import type { AgentEntity } from "../entities/agent.entity.js";
@@ -19,8 +19,14 @@ export function toAgent(entity: AgentEntity): Agent {
     voice: entity.voice?.voice_mode
       ? entity.voice
       : { ...DEFAULT_AGENT_VOICE_SETTINGS, ...(entity.voice ?? {}) },
+    configuration: normalizeAgentConfiguration(entity.configuration),
+    archivedAt: entity.archivedAt ?? null,
     version: entity.version,
     productionVersionId: entity.productionVersionId ?? null,
+    scheduledVersionId: entity.scheduledVersionId ?? null,
+    scheduledPublishAt: entity.scheduledPublishAt ?? null,
+    canaryVersionId: entity.canaryVersionId ?? null,
+    canaryPercentage: entity.canaryPercentage ?? 0,
     builderMode: entity.builderMode ?? "legacy",
     draftGraph: entity.draftGraph ?? null,
     graphSchemaVersion: entity.graphSchemaVersion ?? 1,
@@ -41,6 +47,7 @@ export function toAgentVersion(entity: AgentVersionEntity): AgentVersion {
       voice: snapshot.voice?.voice_mode
         ? snapshot.voice
         : { ...DEFAULT_AGENT_VOICE_SETTINGS, ...(snapshot.voice ?? {}) },
+      configuration: normalizeAgentConfiguration(snapshot.configuration),
     },
     releaseNotes: entity.releaseNotes ?? snapshot?.release_notes ?? null,
     createdBy: entity.createdBy,

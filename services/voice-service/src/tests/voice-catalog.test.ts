@@ -38,6 +38,19 @@ test("catalog routes a preview to the matching provider", async () => {
   assert.ok(seen.some((url) => url.includes("api.elevenlabs.io")));
 });
 
+test("unavailable configured voice falls back to an available English voice", async () => {
+  const catalog = new CatalogTextToSpeech({
+    fishApiKey: "fish-test",
+    fishReferenceId: "fish-voice-1",
+    fetchImpl: async () => new Response(Buffer.from("mp3"), { status: 200 }),
+  });
+  const result = await catalog.synthesize(
+    "Hello",
+    "cartesia:6c756032-11c3-4be8-a120-74f9673fb700",
+  );
+  assert.equal(result.provider, "fish-tts");
+});
+
 test("eager end of turn waits when the phrase is still open", () => {
   assert.ok(eagerCommitDelayMs("I want the blue one and") > eagerCommitDelayMs("I want the blue one."));
   assert.ok(eagerCommitDelayMs("Book it.") < 150);

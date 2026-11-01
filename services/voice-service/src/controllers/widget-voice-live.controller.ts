@@ -222,6 +222,28 @@ export function createWidgetVoiceLiveController(
       res.status(204).end();
     }) as RequestHandler,
 
+    staffStop: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      if (!manager) {
+        throw new AppError({
+          code: ErrorCode.UPSTREAM_UNAVAILABLE,
+          message: "Widget live voice is not configured",
+          requestId,
+        });
+      }
+      const workspaceId = routeParam(req.params.workspaceId);
+      const conversationId = routeParam(req.params.conversationId);
+      const stopped = await manager.stopConversation(workspaceId, conversationId);
+      if (!stopped) {
+        throw new AppError({
+          code: ErrorCode.NOT_FOUND,
+          message: "No active call was found for this conversation",
+          requestId,
+        });
+      }
+      sendPlatformJson(res, 200, { request_id: requestId, stopped: true });
+    }) as RequestHandler,
+
     staffAudio: (async (req, res) => {
       const requestId = requestIdFromResponse(res);
       if (!manager) {

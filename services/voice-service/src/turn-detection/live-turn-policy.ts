@@ -20,28 +20,33 @@ export const SPEECH_TAIL_SILENCE_MS = 180;
 /** Frames kept while Deepgram is still connecting (20 ms frames → 500 ms). */
 export const PRE_READY_FRAME_LIMIT = 25;
 
-/**
- * Speak the first clause as soon as it exists so TTS overlaps the rest of the
- * reply. A comma/colon is a natural clause boundary and saves a full model
- * sentence of waiting compared with the old 3-word rule.
- */
-export function firstSpeakableCut(pending: string): number {
-  // Ignore punctuation inside numbers ("3.5") so TTS does not split mid-value.
-  const punct = pending.search(/(?<!\d)[.!?,;:،۔؟](?!\d)/);
-  if (punct >= 2) return punct + 1;
+/** Keep the first phrase fast, then give TTS enough context for natural prosody. */
+export function firstSpeakableCut(pending: string, firstChunk = true): number {
+  // A punctuation mark inside a number is not a speech boundary; punctuation
+  // after a number ("Order 42.") is. Include Unicode digits used in Urdu.
+  for (const match of pending.matchAll(/[.!?,;:،۔؟]/gu)) {
+    const index = match.index;
+    const before = pending[index - 1] ?? "";
+    const after = pending[index + 1] ?? "";
+    if (/\p{N}/u.test(before) && /\p{N}/u.test(after)) continue;
+    if (/[.,]/.test(match[0]) && /\p{N}/u.test(before) && !after) continue;
+    // Periods followed immediately by a letter can belong to an abbreviation,
+    // URL or identifier. Let a later whitespace/sentence boundary finish it.
+    if (match[0] === "." && /\p{L}/u.test(after)) continue;
+    if (index >= 2) return index + 1;
+  }
   const words = pending.trim().split(/\s+/);
-  if (words.length >= 3 && pending.endsWith(" ")) return pending.length;
+  if (words.length >= (firstChunk ? 3 : 12) && /\s$/u.test(pending)) return pending.length;
   return 0;
 }
 
-const FILLER_ONLY =
-  /^(?:(?:um+|uh+|hmm+|mm+|ah+|er+|erm+|like|you know|i mean)\s*)+$/iu;
+const FILLER_ONLY = /^(?:(?:um+|uh+|hmm+|mm+|ah+|er+|erm+|like|you know|i mean)\s*)+$/iu;
 
 /** True when the finalized transcript is only a hesitation, not a request. */
 export function isFillerOnly(text: string): boolean {
   const normalized = text
     .toLowerCase()
-    .replace(/[^\p{L}\s'-]/gu, " ")
+    .replace(/[^\p{L}\p{N}\s'-]/gu, " ")
     .replace(/\s+/g, " ")
     .trim();
   if (!normalized) return true;

@@ -3,11 +3,15 @@
 import { useState } from "react";
 import { AlertCircle, CheckCircle2, Rocket, X } from "lucide-react";
 import type { Agent } from "../lib/types";
+import { getReleaseReadiness, type ReleaseReadiness } from "../lib/client";
 
 type Props = {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => Promise<void>;
+  onConfirm: (input: {
+    approval?: { approved: boolean; note?: string };
+    completedChecklist: string[];
+  }) => Promise<void>;
   agent: Agent;
   hasUnsavedChanges: boolean;
 };
@@ -15,6 +19,9 @@ type Props = {
 export function PublishModal({ isOpen, onClose, onConfirm, agent, hasUnsavedChanges }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [readiness, setReadiness] = useState<ReleaseReadiness | null>(null);
+  const [completedChecklist, setCompletedChecklist] = useState<string[]>([]);
+  const [approvalNote, setApprovalNote] = useState("");
 
   if (!isOpen) return null;
 
@@ -22,7 +29,28 @@ export function PublishModal({ isOpen, onClose, onConfirm, agent, hasUnsavedChan
     setLoading(true);
     setError(null);
     try {
-      await onConfirm();
+      const check = await getReleaseReadiness(agent.workspace_id, agent.id);
+      if (check.error) throw new Error(check.error.message);
+      if (check.readiness) {
+        setReadiness(check.readiness);
+        if (!check.readiness.ready) {
+          throw new Error(check.readiness.blockers.map((blocker) => blocker.message).join("; "));
+        }
+      }
+      const requiredChecklist = agent.configuration?.release?.required_checklist ?? [];
+      const missingChecklist = requiredChecklist.filter(
+        (item) => !completedChecklist.includes(item),
+      );
+      if (missingChecklist.length > 0) {
+        throw new Error(`Complete the release checklist: ${missingChecklist.join(", ")}`);
+      }
+      const requiresApproval = agent.configuration?.release?.require_approval === true;
+      await onConfirm({
+        completedChecklist,
+        approval: requiresApproval
+          ? { approved: true, note: approvalNote.trim() || undefined }
+          : undefined,
+      });
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to publish agent version");
@@ -72,8 +100,8 @@ export function PublishModal({ isOpen, onClose, onConfirm, agent, hasUnsavedChan
 
         <div className="mt-4 space-y-2.5 text-[13px] text-[#667085] leading-relaxed">
           <p>
-            Publishing freezes an immutable snapshot of this agent&apos;s current prompt instructions,
-            model parameters, and attached tools.
+            Publishing freezes an immutable snapshot of this agent&apos;s current prompt
+            instructions, model parameters, and attached tools.
           </p>
           <div className="p-3.5 rounded-[8px] bg-[#F8F9FB] border border-[#DCE1E8] space-y-1.5 text-[12px]">
             <div className="flex justify-between">
@@ -101,12 +129,57 @@ export function PublishModal({ isOpen, onClose, onConfirm, agent, hasUnsavedChan
           </p>
         </div>
 
+        {(agent.configuration?.release?.required_checklist?.length ?? 0) > 0 && (
+          <div className="mt-4 rounded-[8px] border border-[#DCE1E8] bg-[#F8F9FB] p-3.5">
+            <p className="mb-2 text-[12px] font-semibold text-[#202125]">Release checklist</p>
+            <div className="space-y-2">
+              {agent.configuration?.release?.required_checklist?.map((item) => (
+                <label key={item} className="flex items-start gap-2 text-[12px] text-[#475467]">
+                  <input
+                    type="checkbox"
+                    checked={completedChecklist.includes(item)}
+                    onChange={(e) =>
+                      setCompletedChecklist((current) =>
+                        e.target.checked
+                          ? [...current, item]
+                          : current.filter((value) => value !== item),
+                      )
+                    }
+                    className="mt-0.5 h-4 w-4 accent-[#FF571A]"
+                  />
+                  <span>{item}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {agent.configuration?.release?.require_approval && (
+          <label className="mt-3 block text-[12px] font-medium text-[#475467]">
+            Approval note (optional)
+            <textarea
+              value={approvalNote}
+              onChange={(e) => setApprovalNote(e.target.value)}
+              maxLength={500}
+              rows={2}
+              placeholder="Why is this release approved?"
+              className="mt-1 block w-full rounded border border-[#DCE1E8] p-2 text-[12px] font-normal"
+            />
+          </label>
+        )}
+
         {error && (
           <div className="mt-3 p-3 rounded-[6px] bg-red-50 border border-red-200 text-red-700 text-[13px] flex items-start gap-2">
             <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
         )}
+
+        {readiness?.warnings.length ? (
+          <div className="mt-3 rounded-[6px] border border-amber-200 bg-amber-50 p-3 text-[12px] text-amber-900">
+            {readiness.warnings.join("; ")}
+          </div>
+        ) : null}
 
         <div className="mt-6 flex items-center justify-end gap-3 pt-3 border-t border-[#EDF0F2]">
           <button

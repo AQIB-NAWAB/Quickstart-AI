@@ -58,7 +58,7 @@ test("OpenAI STT uses fixture fetch and the current transcription model", async 
   assert.equal(result.text, "fixture transcript");
   assert.equal(result.provider, "openai-stt");
   assert.equal(seenAuth[0], "Bearer sk-secret-should-not-leak");
-  assert.equal(seenModel, "gpt-4o-transcribe");
+  assert.equal(seenModel, "gpt-transcribe");
 });
 
 test("OpenAI TTS fixture path returns mp3 bytes with the current TTS model", async () => {
@@ -79,7 +79,7 @@ test("OpenAI TTS fixture path returns mp3 bytes with the current TTS model", asy
   assert.equal(result.provider, "openai-tts");
   assert.equal(result.audio.encoding, "mp3");
   assert.ok(result.audio.bytes.length > 0);
-  assert.equal(seenModel, "gpt-4o-mini-tts");
+  assert.equal(seenModel, "gpt-4o-mini-tts-2025-12-15");
 });
 
 test("OpenAI TTS streaming emits audio before the full clip is ready", async () => {
@@ -89,18 +89,17 @@ test("OpenAI TTS streaming emits audio before the full clip is ready", async () 
       new ReadableStream({
         start(controller) {
           controller.enqueue(new Uint8Array([1, 2, 3]));
-          controller.enqueue(new Uint8Array([4, 5]));
+          controller.enqueue(new Uint8Array([4, 5, 6]));
           controller.close();
         },
       }),
       { status: 200, headers: { "content-type": "audio/mpeg" } },
     );
   const tts = new OpenAiTextToSpeech({ apiKey: "sk-test", fetchImpl });
-  const metrics = await tts.streamSynthesize("hello", "alloy", (audio) =>
-    chunks.push(audio.bytes),
-  );
+  const metrics = await tts.streamSynthesize("hello", "alloy", (audio) => chunks.push(audio.bytes));
   assert.equal(chunks.length, 2);
-  assert.deepEqual([...chunks[0]], [1, 2, 3]);
+  assert.deepEqual([...chunks[0]], [1, 2]);
+  assert.deepEqual([...chunks[1]], [3, 4, 5, 6]);
   assert.ok(metrics.firstChunkLatencyMs > 0);
 });
 
@@ -182,4 +181,39 @@ test("usage emitter payloads never include api key material", async () => {
   const serialized = JSON.stringify(facts);
   assert.equal(serialized.includes("sk-super-secret"), false);
   assert.equal(facts[0]?.type, "speech.usage");
+});
+
+test("live OpenAI speech requests PCM and natural delivery while preserving caller voice", async () => {
+  let body: Record<string, unknown> = {};
+  const tts = new OpenAiTextToSpeech({
+    apiKey: "test",
+    fetchImpl: async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(new Uint8Array([0, 1, 2, 3]));
+    },
+  });
+  await tts.streamSynthesize("Hello.", "cedar", (audio) => {
+    assert.equal(audio.encoding, "pcm16");
+    assert.equal(audio.sampleRateHz, 24000);
+  });
+  assert.equal(body.response_format, "pcm");
+  assert.equal(body.voice, "cedar");
+  assert.match(String(body.instructions), /naturally/);
+});
+
+test("legacy TTS omits unsupported default style instructions and rejects truncated PCM", async () => {
+  let body: Record<string, unknown> = {};
+  const tts = new OpenAiTextToSpeech({
+    apiKey: "test",
+    model: "tts-1",
+    fetchImpl: async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(new Uint8Array([0, 1, 2]));
+    },
+  });
+  await assert.rejects(
+    tts.streamSynthesize("Hello.", "alloy", () => {}),
+    /incomplete PCM/,
+  );
+  assert.equal(body.instructions, undefined);
 });

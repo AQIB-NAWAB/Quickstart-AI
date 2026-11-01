@@ -10,12 +10,18 @@ export class AnalyticsService {
 
   async getRollup(
     workspaceId: string,
-    query: { from?: string; to?: string; timezone?: string },
+    query: { from?: string; to?: string; timezone?: string; agentId?: string },
   ): Promise<AnalyticsResponse> {
     if (!UUID_REGEX.test(workspaceId)) {
       throw new AppError({
         code: ErrorCode.VALIDATION_FAILED,
         message: "Valid workspace UUID required",
+      });
+    }
+    if (query.agentId && !UUID_REGEX.test(query.agentId)) {
+      throw new AppError({
+        code: ErrorCode.VALIDATION_FAILED,
+        message: "agent_id must be a valid UUID",
       });
     }
 
@@ -60,6 +66,7 @@ export class AnalyticsService {
       from,
       to,
       timezone: query.timezone ?? "UTC",
+      agentId: query.agentId,
     });
   }
 }

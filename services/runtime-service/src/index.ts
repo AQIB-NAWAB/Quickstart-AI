@@ -108,6 +108,9 @@ export async function main(): Promise<void> {
     toolExecutor,
     knowledgeClient,
     conversationClient,
+    memoryClient,
+    agentClient,
+    toolLoop,
   });
   const sessionStore = new GraphSessionStore(redisClient);
   const graphEngine = new GraphEngine(graphRegistry, sessionStore);

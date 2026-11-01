@@ -16,6 +16,8 @@ import { createTypeOrmAgentStore } from "./repository/typeorm/agent-typeorm-stor
 import { createTypeOrmCustomToolStore } from "./repository/typeorm/custom-tool-typeorm-store.js";
 import { AgentsService } from "./services/agents.service.js";
 import { CustomToolsService } from "./services/custom-tools.service.js";
+import { createSecretsReadinessClient } from "./clients/secrets-readiness.client.js";
+import { ModelGatewayClient } from "./clients/model-gateway.client.js";
 
 export async function startAgentServer(): Promise<{
   server: Server;
@@ -30,7 +32,20 @@ export async function startAgentServer(): Promise<{
   const dataSource = createAgentDataSource(config.databaseUrl);
   await dataSource.initialize();
   const store = createTypeOrmAgentStore(dataSource);
-  const agents = new AgentsService(store);
+  const modelGateway = new ModelGatewayClient(
+    config.modelGatewayUrl,
+    config.modelGatewayInternalToken,
+    config.httpRequestTimeoutMs,
+  );
+  const agents = new AgentsService(
+    store,
+    createSecretsReadinessClient({
+      baseUrl: config.secretsUrl,
+      internalToken: config.internalToken,
+      timeoutMs: config.httpRequestTimeoutMs,
+    }),
+    modelGateway,
+  );
   const customTools = new CustomToolsService(createTypeOrmCustomToolStore(dataSource));
 
   const redisClient = createRedisClient(config.redisUrl);
@@ -80,8 +95,17 @@ export async function startAgentServer(): Promise<{
 
   logger.info("listening", { port: config.port, service: SERVICE_NAME });
 
+  const scheduleTimer = setInterval(() => {
+    void agents.applyDueSchedules().catch((error) =>
+      logger.warn("scheduled_release.apply_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+  }, 15_000);
+
   const shutdown = async () => {
     logger.info("shutdown", { service: SERVICE_NAME });
+    clearInterval(scheduleTimer);
     await new Promise<void>((resolve, reject) => {
       server.close((err?: Error) => (err ? reject(err) : resolve()));
     });

@@ -19,6 +19,12 @@ export const createInternalWidgetRoutes: RouteModule<AgentHttpContext> = (ctx) =
     tenant,
     asyncHandler(agentsCtrl.getVersion),
   );
+  router.post(
+    "/internal/workspaces/:workspaceId/widget/agents/:agentId/canary",
+    internalAuth,
+    tenant,
+    asyncHandler(agentsCtrl.setCanary),
+  );
 
   return router;
 };

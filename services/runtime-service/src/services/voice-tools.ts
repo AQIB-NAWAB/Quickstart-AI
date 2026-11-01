@@ -31,9 +31,10 @@ export function utteranceRequestsAction(text: string | undefined): boolean {
 export function visitorRequestsToolAction(text: string | undefined): boolean {
   const value = text?.trim() ?? "";
   if (!value) return false;
-  return /\b(?:look\s*up|lookup|search(?:\s+for)?|fetch|retrieve|pull\s+up|track|query|check|show|see|open|get|tell)\b.{0,70}\b(?:order|post|ticket|invoice|run|record|account|shipment|booking|payment|lead|customer|slot|slots|appointment|appointments)\b|\b(?:create|update|delete|cancel|book|run|schedule)\s+(?:a|an|the|my|this|it)?\s*(?:order|post|ticket|invoice|run|record|account|shipment|booking|payment|lead|customer|slot|slots|appointment|appointments|it|this)\b|چیک کرو|ڈھونڈ|کینسل|بک کرو|بک کریں|کینسل کریں|\b(?:check karo|check karein|dekh ke batao|dhoondo|dhoondho|booking karni|book kar|book karein|cancel kar|cancel karein|slot check|appointment book)\b/i.test(
-    value,
-  ) ||
+  return (
+    /\b(?:look\s*up|lookup|search(?:\s+for)?|fetch|retrieve|pull\s+up|track|query|check|show|see|open|get|tell)\b.{0,70}\b(?:order|post|ticket|invoice|run|record|account|shipment|booking|payment|lead|customer|slot|slots|appointment|appointments)\b|\b(?:create|update|delete|cancel|book|run|schedule)\s+(?:a|an|the|my|this|it)?\s*(?:order|post|ticket|invoice|run|record|account|shipment|booking|payment|lead|customer|slot|slots|appointment|appointments|it|this)\b|چیک کرو|ڈھونڈ|کینسل|بک کرو|بک کریں|کینسل کریں|\b(?:check karo|check karein|dekh ke batao|dhoondo|dhoondho|booking karni|book kar|book karein|cancel kar|cancel karein|slot check|appointment book)\b/i.test(
+      value,
+    ) ||
     /\b(?:details?|information)\s+(?:of|for|about)\s+(?:(?:the|a|an|my|this|that)\s+)?(?:order|post|ticket|invoice|run|record|account|shipment|booking|payment|lead|customer)\b/i.test(
       value,
     ) ||
@@ -45,16 +46,19 @@ export function visitorRequestsToolAction(text: string | undefined): boolean {
     ) ||
     /\b(?:book|quote|demo|trial|sign up|signup|interested|our team|for our team|work for our|would this work)\b/i.test(
       value,
-    );
+    )
+  );
 }
 
 export function assistantAskedForLookupTarget(text: string | undefined): boolean {
-  return /\b(?:which|what).{0,50}\b(?:post|order|ticket|invoice|run|record|account|shipment|booking|payment|lead|customer|slot|appointment)(?:\s+id)?\b|\b(?:which|what).{0,40}\b(?:id|identifier|number|time|slot)\b/i.test(
-    text ?? "",
-  ) ||
+  return (
+    /\b(?:which|what).{0,50}\b(?:post|order|ticket|invoice|run|record|account|shipment|booking|payment|lead|customer|slot|appointment)(?:\s+id)?\b|\b(?:which|what).{0,40}\b(?:id|identifier|number|time|slot)\b/i.test(
+      text ?? "",
+    ) ||
     /\b(?:share|provide|give|tell me)\b.{0,40}\b(?:the\s+)?(?:id|identifier|number)\b/i.test(
       text ?? "",
-    );
+    )
+  );
 }
 
 export function visitorSuppliedIdentifier(text: string | undefined): boolean {
@@ -122,10 +126,18 @@ export function spokenToolNudge(
   }
   const name = toolName.toLowerCase();
   if (/fetch|get|lookup|search|scrape|retrieve|list/.test(name)) {
-    return urdu ? (feminine ? "ٹھیک ہے، میں یہ لا رہی ہوں۔" : "ٹھیک ہے، میں یہ لا رہا ہوں۔") : "I'm fetching that now.";
+    return urdu
+      ? feminine
+        ? "ٹھیک ہے، میں یہ لا رہی ہوں۔"
+        : "ٹھیک ہے، میں یہ لا رہا ہوں۔"
+      : "I'm fetching that now.";
   }
   if (/status|check/.test(name)) {
-    return urdu ? (feminine ? "ٹھیک ہے، میں یہ چیک کر رہی ہوں۔" : "ٹھیک ہے، میں یہ چیک کر رہا ہوں۔") : "I'm checking that.";
+    return urdu
+      ? feminine
+        ? "ٹھیک ہے، میں یہ چیک کر رہی ہوں۔"
+        : "ٹھیک ہے، میں یہ چیک کر رہا ہوں۔"
+      : "I'm checking that.";
   }
   if (urdu) {
     return feminine ? "ٹھیک ہے، میں یہ چیک کر رہی ہوں۔" : "ٹھیک ہے، میں یہ چیک کر رہا ہوں۔";
@@ -137,14 +149,24 @@ export function spokenToolNudge(
 export function toolChangesData(tool: AgentToolDefinition | undefined): boolean {
   if (!tool || tool.name === VOICE_TRANSFER_TOOL_NAME) return false;
   const lowerName = tool.name.toLowerCase();
-  if (lowerName.includes("cancel") || lowerName.includes("delete") || lowerName.includes("remove")) return true;
+  if (lowerName.includes("cancel") || lowerName.includes("delete") || lowerName.includes("remove"))
+    return true;
   if (tool.name === "book_dental_slot") return false;
   if (tool.type === "http" && tool.method !== "GET") return true;
-  if (tool.type === "builtin_leads" && (tool.action === "start" || tool.action === "cancel")) return true;
+  if (tool.type === "builtin_leads" && (tool.action === "start" || tool.action === "cancel"))
+    return true;
   return false;
 }
 
 export function visitorConfirmed(text: string | undefined): boolean {
+  // A yes followed by a refusal is not authorization. Realtime transcripts can
+  // include corrections such as "yes, but do not book anything yet".
+  if (
+    /^\s*(?:no|nope|nah)\b|\b(?:do not|don't|not yet|not now|wait|stop|hold on|never mind|but no|abhi nahi|abhi nahin|mat karo|mat karein)\b|(?:^|\s)(?:نہیں|مت)(?:\s|[۔،؟.!?]|$)/iu.test(
+      text ?? "",
+    )
+  )
+    return false;
   return /\b(yes|yeah|yep|sure|ok|okay|go ahead|please do|confirm|do it|haan|han|haa|haanji|theek|thik|theek hai|thik hai|sahi hai|bilkul|kar do|kar dein|kardo|kardein|zaroor|chalega|ہاں|جی|جی ہاں|بالکل|ٹھیک ہے|ضرور)\b/i.test(
     text ?? "",
   );

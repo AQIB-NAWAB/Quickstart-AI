@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertCircle,PhoneCall } from "lucide-react";
+import { AlertCircle, PhoneCall, PhoneOff } from "lucide-react";
 import Link from "next/link";
 import { useEffect,useState } from "react";
 import { SAMPLE_LIVE_TRANSCRIPT_SNIPPETS } from "../lib/fixtures";
@@ -30,6 +30,24 @@ export function LiveInboundDashboard({
   const [loading, setLoading] = useState(true);
   const [previewStartedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
+  const [stoppingCallId, setStoppingCallId] = useState<string | null>(null);
+  const [stopError, setStopError] = useState<string | null>(null);
+
+  async function handleStopCall(callId: string) {
+    setStoppingCallId(callId);
+    setStopError(null);
+    const stopped = await repo.stopLiveInboundCall(workspaceId, callId);
+    if (stopped.status === "ready") {
+      setResult((current) =>
+        current?.status === "ready"
+          ? { ...current, data: current.data.filter((call) => call.id !== callId) }
+          : current,
+      );
+    } else {
+      setStopError(stopped.message);
+    }
+    setStoppingCallId(null);
+  }
 
   // Tick elapsed duration every second from actual start time without drifting
   useEffect(() => {
@@ -91,6 +109,12 @@ export function LiveInboundDashboard({
 
       {/* Voice Subnav */}
       <VoiceSubnav workspaceId={workspaceId} isPreview={isPreview} liveCount={calls.length} />
+
+      {stopError && (
+        <div role="alert" className="rounded-8 border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {stopError}
+        </div>
+      )}
 
       {/* Content */}
       {loading ? (
@@ -186,12 +210,25 @@ export function LiveInboundDashboard({
                       </span>
                     </div>
 
-                    <Link
-                      href={`${basePath}/${call.id}`}
-                      className="px-4 py-2 border border-heat-100 text-heat-100 hover:bg-orange-50/80 rounded-8 text-xs font-semibold shadow-xs transition-colors"
-                    >
-                      Inspect
-                    </Link>
+                    <div className="flex items-center gap-2">
+                      <Link
+                        href={`${basePath}/${call.id}`}
+                        className="px-4 py-2 border border-heat-100 text-heat-100 hover:bg-orange-50/80 rounded-8 text-xs font-semibold shadow-xs transition-colors"
+                      >
+                        Inspect
+                      </Link>
+                      {!isPreview && (
+                        <button
+                          type="button"
+                          onClick={() => void handleStopCall(call.id)}
+                          disabled={stoppingCallId === call.id}
+                          className="inline-flex items-center gap-1.5 px-3 py-2 border border-red-200 text-red-700 hover:bg-red-50 rounded-8 text-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
+                        >
+                          <PhoneOff className="h-3.5 w-3.5" />
+                          {stoppingCallId === call.id ? "Stopping…" : "Stop call"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );

@@ -1,4 +1,4 @@
-import type { AgentGraph, AgentToolDefinition } from "@quickstart/contracts";
+import type { AgentConfiguration, AgentGraph, AgentToolDefinition } from "@quickstart/contracts";
 import { AppError, ErrorCode } from "@quickstart/errors";
 import { fetchWithPolicy } from "@quickstart/utilities";
 
@@ -7,7 +7,11 @@ export type AgentInfo = {
   workspace_id: string;
   name: string;
   production_version_id: string | null;
+  canary_version_id?: string | null;
+  canary_percentage?: number;
+  configuration?: AgentConfiguration;
   instructions: string;
+  channels?: { chat: boolean; voice: boolean };
   draft_revision?: number;
   draft_graph?: AgentGraph | null;
   builder_mode?: "legacy" | "canvas";
@@ -20,10 +24,13 @@ export type AgentVersionInfo = {
   workspace_id: string;
   agent_id: string;
   release_number: number;
+  __canary?: boolean;
+  __canaryFailureThreshold?: number | null;
   snapshot: {
     name: string;
     instructions: string;
     model_settings: Record<string, unknown>;
+    configuration?: AgentConfiguration;
     channels?: { chat?: boolean; voice?: boolean };
     tools?: AgentToolDefinition[];
     graph?: AgentGraph;
@@ -49,7 +56,11 @@ export class AgentClient {
     };
   }
 
-  async getAgent(workspaceId: string, agentId: string, headers: Record<string, string>): Promise<AgentInfo> {
+  async getAgent(
+    workspaceId: string,
+    agentId: string,
+    headers: Record<string, string>,
+  ): Promise<AgentInfo> {
     const url = `${this.baseUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}`;
     const res = await fetchWithPolicy(
       url,
@@ -147,6 +158,23 @@ export class AgentClient {
     return data.agent;
   }
 
+  async disableCanaryWidget(
+    workspaceId: string,
+    agentId: string,
+    requestId: string,
+  ): Promise<void> {
+    const res = await fetchWithPolicy(
+      `${this.baseUrl}/internal/workspaces/${encodeURIComponent(workspaceId)}/widget/agents/${encodeURIComponent(agentId)}/canary`,
+      {
+        method: "POST",
+        headers: { ...this.widgetAuthHeaders(requestId), "content-type": "application/json" },
+        body: JSON.stringify({ version_id: null, canary_percentage: 0 }),
+      },
+      { timeoutMs: this.timeoutMs, maxRetries: 0 },
+    );
+    if (!res.ok) throw new Error(`Failed to disable canary traffic (${res.status})`);
+  }
+
   async getVersionWidget(
     workspaceId: string,
     agentId: string,
@@ -205,6 +233,10 @@ export class AgentClient {
         message: `Agent service failed with status ${res.status}`,
       });
     }
-    return (await res.json()) as { graph: AgentGraph; draft_revision: number; builder_mode: "legacy" | "canvas" };
+    return (await res.json()) as {
+      graph: AgentGraph;
+      draft_revision: number;
+      builder_mode: "legacy" | "canvas";
+    };
   }
 }

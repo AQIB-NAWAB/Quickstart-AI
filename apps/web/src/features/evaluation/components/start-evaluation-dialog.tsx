@@ -1,7 +1,9 @@
 "use client";
 
 import { CheckCircle2, Cpu, FileText, Layers, Play, ShieldCheck, Sparkles, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { listVersions } from "../../agents/lib/client";
+import type { AgentVersion } from "../../agents/lib/types";
 import { EvaluationApiClient } from "../lib/api-repository";
 import type { EvaluationDataset, EvaluationRun, ScoringMethod } from "../lib/types";
 
@@ -13,6 +15,7 @@ interface StartEvaluationDialogProps {
   agents?: Array<{ id: string; name: string }>;
   defaultAgentId?: string;
   defaultDatasetId?: string;
+  isPreview?: boolean;
   onRunCreated?: (run: EvaluationRun) => void;
 }
 
@@ -24,12 +27,15 @@ export function StartEvaluationDialog({
   agents = [],
   defaultAgentId,
   defaultDatasetId,
+  isPreview = false,
   onRunCreated,
 }: StartEvaluationDialogProps) {
   const [selectedAgentId, setSelectedAgentId] = useState(
     defaultAgentId || agents[0]?.id || datasets[0]?.agentId || "agent_support",
   );
-  const [selectedVersion, setSelectedVersion] = useState("v8");
+  const [selectedVersion, setSelectedVersion] = useState("");
+  const [versions, setVersions] = useState<AgentVersion[]>([]);
+  const [isLoadingVersions, setIsLoadingVersions] = useState(false);
   const [selectedDatasetId, setSelectedDatasetId] = useState(
     defaultDatasetId || datasets[0]?.id || "",
   );
@@ -38,10 +44,33 @@ export function StartEvaluationDialog({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!isOpen || isPreview || !selectedAgentId) return;
+
+    let cancelled = false;
+    setIsLoadingVersions(true);
+    setError(null);
+    void listVersions(workspaceId, selectedAgentId).then((result) => {
+      if (cancelled) return;
+      const nextVersions = result.versions ?? [];
+      setVersions(nextVersions);
+      setSelectedVersion((current) =>
+        nextVersions.some((version) => version.id === current)
+          ? current
+          : (nextVersions[0]?.id ?? ""),
+      );
+      if (result.error) setError(result.error.message);
+      setIsLoadingVersions(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, isPreview, selectedAgentId, workspaceId]);
+
   if (!isOpen) return null;
 
-  const activeDataset =
-    datasets.find((d) => d.id === selectedDatasetId) || datasets[0];
+  const activeDataset = datasets.find((d) => d.id === selectedDatasetId) || datasets[0];
 
   const caseCount = activeDataset?.caseCount ?? 0;
   const estimatedSeconds = Math.max(5, Math.round(caseCount * 0.9));
@@ -50,6 +79,12 @@ export function StartEvaluationDialog({
     e.preventDefault();
     setIsSubmitting(true);
     setError(null);
+
+    if (!isPreview && !selectedVersion) {
+      setError("Select a published agent version before starting an evaluation.");
+      setIsSubmitting(false);
+      return;
+    }
 
     try {
       const res = await EvaluationApiClient.startRun(workspaceId, {
@@ -97,9 +132,7 @@ export function StartEvaluationDialog({
               <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#FF571A]/10 text-[#FF571A]">
                 <Play className="h-4 w-4 fill-[#FF571A]" />
               </span>
-              <h2 className="text-base font-bold text-[#18181B]">
-                Start Evaluation Run
-              </h2>
+              <h2 className="text-base font-bold text-[#18181B]">Start Evaluation Run</h2>
             </div>
             <p className="text-xs text-[#71717A] mt-1">
               Benchmark agent accuracy and tool invocation against an immutable test suite.
@@ -125,9 +158,7 @@ export function StartEvaluationDialog({
           {/* Agent & Version Row */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#18181B]">
-                Target Agent
-              </label>
+              <label className="text-xs font-semibold text-[#18181B]">Target Agent</label>
               <select
                 value={selectedAgentId}
                 onChange={(e) => setSelectedAgentId(e.target.value)}
@@ -146,28 +177,42 @@ export function StartEvaluationDialog({
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-[#18181B]">
-                Agent Version Snapshot
-              </label>
+              <label className="text-xs font-semibold text-[#18181B]">Agent Version Snapshot</label>
               <select
                 value={selectedVersion}
                 onChange={(e) => setSelectedVersion(e.target.value)}
+                disabled={isPreview || isLoadingVersions || versions.length === 0}
                 className="w-full rounded-lg border border-[#DCE1E8] bg-white px-3 py-2 text-xs font-medium text-[#18181B] focus:border-[#FF571A] focus:outline-none"
               >
-                <option value="v8">v8 · Published Active (Production)</option>
-                <option value="v7">v7 · Candidate Release</option>
-                <option value="v6">v6 · Baseline Release</option>
-                <option value="draft">Current Draft Working Copy</option>
+                {isPreview ? (
+                  <option value="preview-version">Sample published version</option>
+                ) : versions.length > 0 ? (
+                  versions.map((version) => (
+                    <option key={version.id} value={version.id}>
+                      v{version.release_number} ·{" "}
+                      {version.id === versions[0]?.id ? "Latest snapshot" : "Published snapshot"}
+                    </option>
+                  ))
+                ) : (
+                  <option value="">
+                    {isLoadingVersions
+                      ? "Loading published versions…"
+                      : "No published versions available"}
+                  </option>
+                )}
               </select>
+              {!isPreview && versions.length === 0 && !isLoadingVersions && (
+                <p className="text-[11px] text-[#B42318]">
+                  Publish the agent once before running a real evaluation.
+                </p>
+              )}
             </div>
           </div>
 
           {/* Dataset Selector */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-semibold text-[#18181B]">
-                Evaluation Dataset
-              </label>
+              <label className="text-xs font-semibold text-[#18181B]">Evaluation Dataset</label>
               {activeDataset && (
                 <span className="text-[11px] font-mono text-[#71717A]">
                   rev {activeDataset.revision} · {activeDataset.caseCount} cases
@@ -204,7 +249,9 @@ export function StartEvaluationDialog({
                 }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
-                  <FileText className={`h-4 w-4 ${scoringMethod === "exact_match" ? "text-[#FF571A]" : "text-[#71717A]"}`} />
+                  <FileText
+                    className={`h-4 w-4 ${scoringMethod === "exact_match" ? "text-[#FF571A]" : "text-[#71717A]"}`}
+                  />
                   {scoringMethod === "exact_match" && (
                     <CheckCircle2 className="h-4 w-4 text-[#FF571A]" />
                   )}
@@ -226,7 +273,9 @@ export function StartEvaluationDialog({
                 }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
-                  <Sparkles className={`h-4 w-4 ${scoringMethod === "semantic_similarity" ? "text-[#FF571A]" : "text-[#71717A]"}`} />
+                  <Sparkles
+                    className={`h-4 w-4 ${scoringMethod === "semantic_similarity" ? "text-[#FF571A]" : "text-[#71717A]"}`}
+                  />
                   {scoringMethod === "semantic_similarity" && (
                     <CheckCircle2 className="h-4 w-4 text-[#FF571A]" />
                   )}
@@ -248,7 +297,9 @@ export function StartEvaluationDialog({
                 }`}
               >
                 <div className="flex items-center justify-between w-full mb-1">
-                  <Cpu className={`h-4 w-4 ${scoringMethod === "tool_trace" ? "text-[#FF571A]" : "text-[#71717A]"}`} />
+                  <Cpu
+                    className={`h-4 w-4 ${scoringMethod === "tool_trace" ? "text-[#FF571A]" : "text-[#71717A]"}`}
+                  />
                   {scoringMethod === "tool_trace" && (
                     <CheckCircle2 className="h-4 w-4 text-[#FF571A]" />
                   )}
@@ -290,11 +341,10 @@ export function StartEvaluationDialog({
           <div className="flex items-start gap-2.5 rounded-xl border border-[#D1FADF] bg-[#ECFDF3] p-3 text-xs text-[#027A48]">
             <ShieldCheck className="h-5 w-5 shrink-0 text-[#12B76A]" />
             <div>
-              <div className="font-semibold text-[#027A48]">
-                Isolated Test Execution Mode
-              </div>
+              <div className="font-semibold text-[#027A48]">Isolated Test Execution Mode</div>
               <p className="text-[11px] text-[#067647] mt-0.5 leading-relaxed">
-                Model tool calls are resolved via configured mock fixtures. No live visitor chats, production databases, external email queues, or webhooks will be triggered.
+                Model tool calls are resolved via configured mock fixtures. No live visitor chats,
+                production databases, external email queues, or webhooks will be triggered.
               </p>
             </div>
           </div>

@@ -106,6 +106,60 @@ test("canvas write requires authentication", async () => {
   });
 });
 
+test("AI editor returns a validated draft proposal", async () => {
+  await withAgentServer(
+    async ({ port, createToken }) => {
+      const token = await createToken("00000000-0000-0000-0000-000000000001");
+      const headers = {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      };
+      const base = `http://127.0.0.1:${port}/v1/workspaces/${workspace}/agents`;
+      const created = await fetch(base, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ name: "AI editor regression", model_settings: { model: "fake" } }),
+      });
+      assert.equal(created.status, 201);
+      const { agent } = (await created.json()) as { agent: { id: string } };
+
+      const response = await fetch(`${base}/${agent.id}/ai-edit`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ prompt: "Make the greeting concise." }),
+      });
+      assert.equal(response.status, 200);
+      const proposal = (await response.json()) as {
+        summary: string;
+        changes: string[];
+        validation: { valid: boolean };
+      };
+      assert.equal(proposal.validation.valid, true);
+      assert.equal(proposal.summary, "Concise greeting");
+      assert.deepEqual(proposal.changes, ["Updated the greeting"]);
+    },
+    {
+      modelGateway: {
+        async complete() {
+          return {
+            content: JSON.stringify({
+              summary: "Concise greeting",
+              changes: ["Updated the greeting"],
+              settings: { instructions: "Be concise." },
+              graph,
+            }),
+            finish_reason: "stop",
+            usage: { input_tokens: 1, output_tokens: 1 },
+            provider: "fake",
+            model: "fake",
+            latency_ms: 1,
+          };
+        },
+      },
+    },
+  );
+});
+
 test("unsigned gateway context cannot authorize canvas writes", async () => {
   await withAgentServer(async ({ port }) => {
     const context = Buffer.from(

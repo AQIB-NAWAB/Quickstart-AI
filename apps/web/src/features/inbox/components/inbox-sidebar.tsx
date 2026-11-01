@@ -10,6 +10,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Phone,
+  PhoneOff,
   Search,
   User,
   X,
@@ -19,6 +20,7 @@ import {
   listConversations,
   listMessages,
   listWidgetLiveCalls,
+  stopWidgetLiveCall,
   type WidgetLiveCall,
 } from "@/features/inbox/lib/client";
 import {
@@ -42,6 +44,7 @@ export function InboxSidebar({ workspaceId, isPreview = false }: Props) {
   const [search, setSearch] = useState("");
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [liveCalls, setLiveCalls] = useState<WidgetLiveCall[]>([]);
+  const [stoppingLiveCallId, setStoppingLiveCallId] = useState<string | null>(null);
   const [messagePreviews, setMessagePreviews] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +52,17 @@ export function InboxSidebar({ workspaceId, isPreview = false }: Props) {
   const [liveOpen, setLiveOpen] = useState(false);
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const lastFetchedSeqRef = useRef<Record<string, number>>({});
+
+  const handleStopLiveCall = useCallback(async (conversationId: string) => {
+    setStoppingLiveCallId(conversationId);
+    const result = await stopWidgetLiveCall(workspaceId, conversationId);
+    if (result.error) {
+      setError(result.error.message || "Could not stop this call.");
+    } else {
+      setLiveCalls((current) => current.filter((call) => call.conversation_id !== conversationId));
+    }
+    setStoppingLiveCallId(null);
+  }, [workspaceId]);
 
   // Determine active conversation ID from URL
   const activeId = useMemo(() => {
@@ -323,11 +337,11 @@ export function InboxSidebar({ workspaceId, isPreview = false }: Props) {
                       const conv = byId.get(call.conversation_id);
                       const isCallActive = activeId === call.conversation_id;
                       return (
-                        <li key={call.conversation_id}>
+                        <li key={call.conversation_id} className="flex items-center gap-1">
                           <Link
                             href={hrefFor(call.conversation_id)}
                             className={clsx(
-                              "flex items-center justify-between p-2 rounded-md text-[12px] transition-colors",
+                              "flex min-w-0 flex-1 items-center justify-between p-2 rounded-md text-[12px] transition-colors",
                               isCallActive
                                 ? "bg-[#FFF3EE] text-[#202125] font-medium"
                                 : "hover:bg-[#F8F9FA] text-[#202125]",
@@ -340,6 +354,18 @@ export function InboxSidebar({ workspaceId, isPreview = false }: Props) {
                               Live
                             </span>
                           </Link>
+                          {!isPreview && (
+                            <button
+                              type="button"
+                              aria-label="Stop live call"
+                              title="Stop call"
+                              disabled={stoppingLiveCallId === call.conversation_id}
+                              onClick={() => void handleStopLiveCall(call.conversation_id)}
+                              className="shrink-0 rounded-md p-2 text-neutral-500 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+                            >
+                              <PhoneOff className="h-3.5 w-3.5" />
+                            </button>
+                          )}
                         </li>
                       );
                     })}

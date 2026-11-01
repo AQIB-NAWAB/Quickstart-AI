@@ -270,6 +270,7 @@ export async function startVoiceServer(): Promise<{
     widgetVoiceLive = new WidgetVoiceLiveSessionManager({
       deepgramApiKey: config.deepgramApiKey,
       deepgramModel: config.deepgramModel ?? "nova-3",
+      deepgramLanguage: config.deepgramLanguage,
       deepgramEndpointingMs: config.deepgramEndpointingMs,
       speechTailMs: config.speechTailMs,
       runtimeUrl: config.runtimeUrl,
@@ -281,6 +282,9 @@ export async function startVoiceServer(): Promise<{
       geminiLiveModel: config.geminiLiveModel,
       openaiApiKey: config.speechOpenaiApiKey,
       openaiRealtimeModel: config.openaiRealtimeModel,
+      openaiRealtimeTranscriptionModel: config.openaiRealtimeTranscriptionModel,
+      openaiRealtimeVoice: config.openaiRealtimeVoice,
+      openaiRealtimeTranscriptionDelay: config.openaiRealtimeTranscriptionDelay,
       elevenLabsApiKey: config.elevenLabsApiKey,
       elevenLabsRealtimeModel: config.elevenLabsRealtimeModel,
       elevenLabsVoiceId: config.elevenLabsVoiceId,
@@ -340,6 +344,8 @@ export async function startVoiceServer(): Promise<{
     conversations,
     statusIdempotency,
     bridge: inboundBridge,
+    telephony,
+    widgetSessions: widgetVoiceLive,
     usageIngest,
     logger,
   });
@@ -367,7 +373,7 @@ export async function startVoiceServer(): Promise<{
     tenantGuard: requireTenantContext(),
     internalAuth: createRequireInternalTokenMiddleware(config.internalToken),
     workspaceAccess,
-    callsCtrl: createCallsController(callsRepo, orchestrator, recordings),
+    callsCtrl: createCallsController(callsRepo, orchestrator, recordings, conversations),
     campaignsCtrl: createCampaignsController(campaigns),
     phoneNumbersCtrl: createPhoneNumbersController(phoneNumbers, {
       providerConfigured: telnyxClient.kind === "telnyx",

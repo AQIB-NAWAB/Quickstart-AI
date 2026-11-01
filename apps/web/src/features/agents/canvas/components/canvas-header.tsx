@@ -12,6 +12,7 @@ import {
   RotateCcw,
   RotateCw,
   Send,
+  Sparkles,
 } from "lucide-react";
 import type { CanvasSaveState } from "../lib/types";
 
@@ -27,8 +28,10 @@ export type CanvasHeaderProps = {
   onUndo: () => void;
   onRedo: () => void;
   onTestAgent: () => void;
+  onAiEdit: () => void;
   onPublish: () => void;
   actionsDisabled?: boolean;
+  aiDisabled?: boolean;
 };
 
 export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
@@ -43,8 +46,10 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
   onUndo,
   onRedo,
   onTestAgent,
+  onAiEdit,
   onPublish,
   actionsDisabled,
+  aiDisabled,
 }) => {
   return (
     <header className="h-16 bg-white border-b border-neutral-200 px-4 flex items-center justify-between select-none z-20 gap-3 [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed shrink-0">
@@ -147,7 +152,7 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
         </div>
       </div>
 
-      {/* Right: Test agent + Publish release */}
+      {/* Right: AI edit + Test agent + Publish release */}
       <div className="flex items-center gap-2.5">
         <Link
           href={`/workspaces/${workspaceId}/agents/${agentId}?tab=releases`}
@@ -157,6 +162,17 @@ export const CanvasHeader: React.FC<CanvasHeaderProps> = ({
           <History className="w-3.5 h-3.5" />
           <span>Releases</span>
         </Link>
+
+        <button
+          type="button"
+          onClick={onAiEdit}
+          disabled={aiDisabled ?? actionsDisabled}
+          className="flex items-center gap-1.5 h-10 px-3 text-[13px] font-medium text-neutral-700 bg-white hover:bg-neutral-100 rounded-lg transition-colors border border-neutral-200"
+          title="Describe a workflow change and let AI prepare a draft"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-neutral-500" />
+          <span>AI edit</span>
+        </button>
 
         <button
           type="button"

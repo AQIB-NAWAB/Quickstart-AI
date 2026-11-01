@@ -9,8 +9,8 @@ export default async function WorkspaceAgentsPage({ params }: Props) {
   const { activeWorkspace } = await loadWorkspaceShell(params.workspaceId);
   const token = await getAccessTokenFromCookies();
 
-  const result = await gatewayFetch<{ agents: Agent[] }>(
-    `/v1/workspaces/${encodeURIComponent(activeWorkspace.id)}/agents`,
+  const result = await gatewayFetch<{ agents: Agent[]; next_cursor?: string | null }>(
+    `/v1/workspaces/${encodeURIComponent(activeWorkspace.id)}/agents?limit=50`,
     { accessToken: token },
   );
 
@@ -22,6 +22,7 @@ export default async function WorkspaceAgentsPage({ params }: Props) {
         workspaceId={activeWorkspace.id}
         workspaceName={activeWorkspace.name}
         initialAgents={agents}
+        initialNextCursor={result.ok ? result.data.next_cursor ?? null : null}
       />
     </div>
   );

@@ -12,6 +12,7 @@ import type {
   ProcessingTurn,
   PurchasePhoneNumberInput,
   RepositoryResult,
+  SimulatedInboundCallResult,
   TranscriptSegment,
   UpdatePhoneNumberInput,
   VoiceInboundSummary,
@@ -139,6 +140,25 @@ class InMemoryVoicePreviewStore implements VoiceRepository {
       status: "ready",
       data: JSON.parse(JSON.stringify(this.liveCalls)),
     };
+  }
+
+  async stopLiveInboundCall(
+    _workspaceId: string,
+    callId: string,
+  ): Promise<RepositoryResult<{ stopped: boolean }>> {
+    void _workspaceId;
+    const index = this.liveCalls.findIndex((call) => call.id === callId);
+    if (index < 0) return { status: "not_found", message: "Live call was not found." };
+    this.liveCalls.splice(index, 1);
+    return { status: "ready", data: { stopped: true } };
+  }
+
+  async simulateInboundCall(
+    _workspaceId: string,
+    _input: { agent_id: string; utterance_text: string; caller?: string },
+    _signal?: AbortSignal,
+  ): Promise<RepositoryResult<{ result: SimulatedInboundCallResult }>> {
+    return { status: "unavailable", message: "Call simulation is available in a connected workspace." };
   }
 
   async getInboundCall(

@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
+  Archive,
+  ArchiveRestore,
   ChevronDown,
   FileText,
   MessageSquare,
@@ -22,9 +24,16 @@ type Props = {
   workspaceId: string;
   onTestAgent: (agent: Agent) => void;
   onDeleteAgent: (agentId: string) => Promise<boolean>;
+  onArchiveAgent: (agentId: string, archived: boolean) => Promise<boolean>;
 };
 
-export function AgentCard({ agent, workspaceId, onTestAgent, onDeleteAgent }: Props) {
+export function AgentCard({
+  agent,
+  workspaceId,
+  onTestAgent,
+  onDeleteAgent,
+  onArchiveAgent,
+}: Props) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -42,6 +51,7 @@ export function AgentCard({ agent, workspaceId, onTestAgent, onDeleteAgent }: Pr
   }, []);
 
   const isLive = Boolean(agent.production_version_id);
+  const isArchived = Boolean(agent.archived_at);
   const modelName =
     (agent.model_settings?.model_id as string) ||
     (agent.model_settings?.model as string) ||
@@ -105,7 +115,12 @@ export function AgentCard({ agent, workspaceId, onTestAgent, onDeleteAgent }: Pr
 
           {/* Status Column & Ellipsis Menu */}
           <div className="flex items-center justify-end gap-3 w-[140px] shrink-0">
-            {isLive ? (
+            {isArchived ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[13px] font-medium bg-[#FFF4E5] text-[#B54708]">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#B54708]" aria-hidden="true" />
+                Archived
+              </span>
+            ) : isLive ? (
               <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[13px] font-medium bg-[#E9F9EF] text-[#168A45]">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#168A45]" aria-hidden="true" />
                 Live
@@ -147,15 +162,32 @@ export function AgentCard({ agent, workspaceId, onTestAgent, onDeleteAgent }: Pr
                   </Link>
                   <button
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setMenuOpen(false);
-                      setDeleteModalOpen(true);
+                      await onArchiveAgent(agent.id, !isArchived);
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-[14px] text-[#B42318] hover:bg-red-50 transition-colors text-left"
+                    className="w-full flex items-center gap-2 px-3 py-2 text-[14px] text-[#202125] hover:bg-[#F8F9FA] transition-colors text-left"
                   >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    Delete agent
+                    {isArchived ? (
+                      <ArchiveRestore className="w-3.5 h-3.5" />
+                    ) : (
+                      <Archive className="w-3.5 h-3.5" />
+                    )}
+                    {isArchived ? "Restore agent" : "Archive agent"}
                   </button>
+                  {isArchived && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMenuOpen(false);
+                        setDeleteModalOpen(true);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[14px] text-[#B42318] hover:bg-red-50 transition-colors text-left"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Delete agent
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -181,7 +213,9 @@ export function AgentCard({ agent, workspaceId, onTestAgent, onDeleteAgent }: Pr
               </div>
               <div>
                 <span className="text-[#667085] block text-[11px] font-medium">Environment</span>
-                <span className="capitalize text-[#202125]">{agent.environment || "production"}</span>
+                <span className="capitalize text-[#202125]">
+                  {agent.environment || "production"}
+                </span>
               </div>
               <div>
                 <span className="text-[#667085] block text-[11px] font-medium">Version</span>

@@ -26,9 +26,7 @@ export function AgentEvaluationPage({
   const [overviewData, setOverviewData] = useState<EvaluationOverviewData>(initialData);
   const [isStartRunOpen, setIsStartRunOpen] = useState(false);
 
-  const basePath = isPreview
-    ? "/preview/eval"
-    : `/workspaces/${workspaceId}/eval`;
+  const basePath = isPreview ? "/preview/eval" : `/workspaces/${workspaceId}/eval`;
 
   return (
     <div className="space-y-6">
@@ -127,9 +125,7 @@ export function AgentEvaluationPage({
                 <span className="text-2xl font-bold font-mono text-[#18181B]">
                   {overviewData.latestScore != null ? `${overviewData.latestScore}%` : "—"}
                 </span>
-                <span className="text-xs text-[#71717A]">
-                  /{overviewData.scoreScale}
-                </span>
+                <span className="text-xs text-[#71717A]">/{overviewData.scoreScale}</span>
               </div>
             </div>
 
@@ -140,9 +136,7 @@ export function AgentEvaluationPage({
                 <span className="text-2xl font-bold font-mono text-[#027A48]">
                   {overviewData.passedCases ?? "—"}
                 </span>
-                <span className="text-xs text-[#71717A]">
-                  /{overviewData.totalCases}
-                </span>
+                <span className="text-xs text-[#71717A]">/{overviewData.totalCases}</span>
               </div>
             </div>
 
@@ -153,9 +147,7 @@ export function AgentEvaluationPage({
                 <span className="text-2xl font-bold font-mono text-[#B42318]">
                   {overviewData.failedCases ?? "—"}
                 </span>
-                <span className="text-xs text-[#71717A]">
-                  /{overviewData.totalCases}
-                </span>
+                <span className="text-xs text-[#71717A]">/{overviewData.totalCases}</span>
               </div>
             </div>
 
@@ -171,7 +163,8 @@ export function AgentEvaluationPage({
                 </span>
               </div>
               <p className="text-[11px] text-[#71717A] truncate font-mono mt-1">
-                {overviewData.latestRun?.datasetName} (rev {overviewData.latestRun?.datasetRevision})
+                {overviewData.latestRun?.datasetName} (rev {overviewData.latestRun?.datasetRevision}
+                )
               </p>
             </div>
           </div>
@@ -263,6 +256,7 @@ export function AgentEvaluationPage({
         workspaceId={workspaceId}
         datasets={overviewData.datasets}
         defaultAgentId={overviewData.agentId}
+        isPreview={isPreview}
         onRunCreated={(run) => {
           setOverviewData((prev) => ({
             ...prev,

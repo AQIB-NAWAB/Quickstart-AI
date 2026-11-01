@@ -10,24 +10,29 @@ import type { EvaluationDataset } from "../lib/types";
 interface DatasetFormProps {
   workspaceId: string;
   isPreview?: boolean;
-  onSubmit?: (data: { name: string; description?: string; tags?: string[] }) => Promise<EvaluationDataset | null>;
+  agents?: Array<{ id: string; name: string }>;
+  onSubmit?: (data: {
+    name: string;
+    description?: string;
+    tags?: string[];
+  }) => Promise<EvaluationDataset | null>;
 }
 
 export function DatasetForm({
   workspaceId,
   isPreview = false,
+  agents = [],
   onSubmit,
 }: DatasetFormProps) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
+  const [agentId, setAgentId] = useState(agents[0]?.id ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const basePath = isPreview
-    ? "/preview/eval"
-    : `/workspaces/${workspaceId}/eval`;
+  const basePath = isPreview ? "/preview/eval" : `/workspaces/${workspaceId}/eval`;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,8 +61,13 @@ export function DatasetForm({
           return;
         }
       } else {
+        if (!agentId) {
+          setError("Select an agent before creating a dataset.");
+          setIsSubmitting(false);
+          return;
+        }
         const res = await EvaluationApiClient.createDataset(workspaceId, {
-          agentId: "all",
+          agentId,
           name: name.trim(),
           description: description.trim() || undefined,
           tags: tagsArray,
@@ -95,7 +105,8 @@ export function DatasetForm({
             Create Evaluation Dataset
           </h1>
           <p className="text-xs text-[#71717A] mt-0.5">
-            Create a benchmark dataset to evaluate agent versions against expected outputs and tools.
+            Create a benchmark dataset to evaluate agent versions against expected outputs and
+            tools.
           </p>
         </div>
       </div>
@@ -105,6 +116,31 @@ export function DatasetForm({
           {error && (
             <div className="rounded-lg bg-[#FEF3F2] border border-[#FEE4E2] p-3 text-xs text-[#B42318]">
               {error}
+            </div>
+          )}
+
+          {!isPreview && (
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-[#18181B]">
+                Agent <span className="text-[#FF571A]">*</span>
+              </label>
+              {agents.length > 0 ? (
+                <select
+                  value={agentId}
+                  onChange={(e) => setAgentId(e.target.value)}
+                  className="w-full rounded-lg border border-[#DCE1E8] bg-white px-3 py-2 text-xs text-[#18181B] focus:border-[#FF571A] focus:outline-none"
+                >
+                  {agents.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                  Create an agent first, then create an evaluation dataset for it.
+                </p>
+              )}
             </div>
           )}
 
@@ -123,9 +159,7 @@ export function DatasetForm({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-[#18181B]">
-              Description (optional)
-            </label>
+            <label className="text-xs font-semibold text-[#18181B]">Description (optional)</label>
             <textarea
               rows={3}
               value={description}
@@ -154,7 +188,9 @@ export function DatasetForm({
               <span>Immutable Snapshot Revisions</span>
             </div>
             <p className="text-[11px] text-[#71717A] leading-relaxed">
-              Datasets start at revision 1. Any subsequent edits or batch imports increment the revision number and create frozen snapshots during evaluation runs so historical test metrics remain 100% reproducible.
+              Datasets start at revision 1. Any subsequent edits or batch imports increment the
+              revision number and create frozen snapshots during evaluation runs so historical test
+              metrics remain 100% reproducible.
             </p>
           </div>
 

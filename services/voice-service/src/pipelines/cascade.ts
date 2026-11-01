@@ -64,6 +64,9 @@ export class CascadePipeline {
       bargedIn = true;
     }
 
+    // Keep simulated and real media on the same STT path. Apart from making
+    // preview behavior representative, this ensures cancellation and timing
+    // semantics are exercised identically in tests and production.
     const sttResult = await this.stt.transcribe(input.audio, input.abortSignal);
     this.emitSpeech(input, "stt", sttResult.provider, 1);
     let assistantText = input.spokenFallback;

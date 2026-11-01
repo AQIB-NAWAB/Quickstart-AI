@@ -107,7 +107,13 @@ export function CreateAgentForm({
       instructions: draft.instructions.trim(),
       environment: draft.environment,
       channels: { chat: draft.chatEnabled, voice: draft.voiceEnabled },
-      model_settings: { model: "gpt-4o-mini", temperature: 0.3, max_tokens: 1024 },
+      model_settings: {
+        model: "gpt-6-luna",
+        temperature: 0.3,
+        max_tokens: 4096,
+        reasoning_effort: "low",
+        verbosity: "medium",
+      },
       tools: [],
     });
     setLoading(false);

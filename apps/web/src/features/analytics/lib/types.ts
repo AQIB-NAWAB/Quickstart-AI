@@ -70,6 +70,16 @@ export interface ServiceUsageItem {
   isUnpriced: boolean;
 }
 
+export interface OperationalMetrics {
+  toolCalls: number;
+  successfulToolCalls: number;
+  failedToolCalls: number;
+  toolSuccessRatePct: number | null;
+  handoffs: number;
+  evaluationRuns: number;
+  evaluationPassRatePct: number | null;
+}
+
 export interface AcquisitionUsageItem {
   action: string;
   label: string;
@@ -85,6 +95,7 @@ export interface AnalyticsData {
   hourlyConversations: HourlyConversationPoint[];
   dailyLatency: DailyLatencyPoint[];
   usageByService: ServiceUsageItem[];
+  operationalMetrics?: OperationalMetrics;
   acquisitions: AcquisitionUsageItem[];
   voice: {
     minutes: number | null;

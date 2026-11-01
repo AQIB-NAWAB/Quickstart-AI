@@ -37,6 +37,7 @@ export type VoiceConfig = {
   speechOpenaiTtsModel?: string;
   deepgramApiKey?: string;
   deepgramModel?: string;
+  deepgramLanguage: string;
   deepgramEndpointingMs: number;
   speechTailMs: number;
   fishAudioApiKey?: string;
@@ -55,6 +56,9 @@ export type VoiceConfig = {
   geminiApiKey?: string;
   geminiLiveModel?: string;
   openaiRealtimeModel?: string;
+  openaiRealtimeTranscriptionModel: string;
+  openaiRealtimeVoice: string;
+  openaiRealtimeTranscriptionDelay: "minimal" | "low" | "medium" | "high" | "xhigh";
   /** auto = prefer cascade when configured, otherwise Gemini/OpenAI/ElevenLabs. */
   s2sProvider: "auto" | "gemini" | "openai" | "elevenlabs" | "none";
   requireRealSpeech: boolean;
@@ -178,6 +182,7 @@ export function loadVoiceConfig(): VoiceConfig {
     speechOpenaiTtsModel: process.env.SPEECH_OPENAI_TTS_MODEL?.trim() || undefined,
     deepgramApiKey: process.env.DEEPGRAM_API_KEY?.trim() || undefined,
     deepgramModel: process.env.DEEPGRAM_MODEL?.trim() || undefined,
+    deepgramLanguage: process.env.DEEPGRAM_LANGUAGE?.trim() || "multi",
     deepgramEndpointingMs: Math.max(
       10,
       Number(process.env.DEEPGRAM_ENDPOINTING_MS ?? 100) || 100,
@@ -203,6 +208,15 @@ export function loadVoiceConfig(): VoiceConfig {
       undefined,
     geminiLiveModel: process.env.GEMINI_LIVE_MODEL?.trim() || undefined,
     openaiRealtimeModel: process.env.OPENAI_REALTIME_MODEL?.trim() || undefined,
+    openaiRealtimeTranscriptionModel:
+      process.env.OPENAI_REALTIME_TRANSCRIPTION_MODEL?.trim() || "gpt-live-transcribe",
+    openaiRealtimeVoice: process.env.OPENAI_REALTIME_VOICE?.trim() || "marin",
+    openaiRealtimeTranscriptionDelay: (() => {
+      const value = process.env.OPENAI_REALTIME_TRANSCRIPTION_DELAY?.trim().toLowerCase();
+      return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh"
+        ? value
+        : "minimal";
+    })(),
     s2sProvider: parseS2sProvider(process.env.VOICE_S2S_PROVIDER),
     requireRealSpeech: process.env.VOICE_REQUIRE_REAL_SPEECH === "1",
     speechCircuitFailureThreshold: Number(process.env.SPEECH_CIRCUIT_FAILURE_THRESHOLD ?? 5),

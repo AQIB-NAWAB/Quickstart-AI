@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ComponentType } from "react";
+import { useEffect, useMemo, useState, type ComponentType } from "react";
 import {
   CalendarDays,
   Check,
@@ -30,6 +30,7 @@ import type { CustomToolItem } from "@/features/settings/lib/types";
 import { CustomToolsModal } from "@/features/settings/components/custom-tools-modal";
 import { AgentToolsManageDrawer } from "./agent-tools-manage-drawer";
 import { listSecrets } from "@/features/settings/lib/client";
+import { getAgentCatalog } from "../lib/client";
 
 type CategoryFilter = "all" | "web" | "calendar" | "leads" | "integrations" | "custom";
 type StatusFilter = "all" | "attached" | "not_attached";
@@ -39,6 +40,7 @@ type Props = {
   canManageCustomTools: boolean;
   attachedTools: AgentToolDefinition[];
   onToggle: (tool: AgentToolDefinition) => void;
+  onUpdate: (tool: AgentToolDefinition) => void;
   customTools: CustomToolItem[];
   customToolsLoading: boolean;
   customToolsError: string | null;
@@ -74,6 +76,7 @@ export function AgentToolsPanel({
   canManageCustomTools,
   attachedTools,
   onToggle,
+  onUpdate,
   customTools,
   customToolsLoading,
   customToolsError,
@@ -85,6 +88,20 @@ export function AgentToolsPanel({
   const [manageOpen, setManageOpen] = useState(false);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [secretNames, setSecretNames] = useState<string[]>([]);
+  const [enabledToolNames, setEnabledToolNames] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    void getAgentCatalog(workspaceId).then((result) => {
+      if (!active || !result.catalog) return;
+      setEnabledToolNames(
+        new Set(result.catalog.tools.filter((tool) => tool.enabled).map((tool) => tool.name)),
+      );
+    });
+    return () => {
+      active = false;
+    };
+  }, [workspaceId]);
 
   // Format custom tools
   const customAgentTools = useMemo(
@@ -93,20 +110,25 @@ export function AgentToolsPanel({
   );
 
   // All available tools
-  const allTools = useMemo(() => {
-    return [...BUILTIN_TOOLS, ...customAgentTools];
-  }, [customAgentTools]);
+  const builtinTools = useMemo(
+    () =>
+      enabledToolNames
+        ? BUILTIN_TOOLS.filter((tool) => enabledToolNames.has(tool.name))
+        : BUILTIN_TOOLS,
+    [enabledToolNames],
+  );
+  const allTools = useMemo(() => [...builtinTools, ...customAgentTools], [builtinTools, customAgentTools]);
 
   // Counts for library categories
-  const webTools = useMemo(() => BUILTIN_TOOLS.filter((t) => t.type === "builtin_web"), []);
+  const webTools = useMemo(() => builtinTools.filter((t) => t.type === "builtin_web"), [builtinTools]);
   const calendarTools = useMemo(
-    () => BUILTIN_TOOLS.filter((t) => t.type === "builtin_calendar"),
-    [],
+    () => builtinTools.filter((t) => t.type === "builtin_calendar"),
+    [builtinTools],
   );
-  const leadTools = useMemo(() => BUILTIN_TOOLS.filter((t) => t.type === "builtin_leads"), []);
+  const leadTools = useMemo(() => builtinTools.filter((t) => t.type === "builtin_leads"), [builtinTools]);
   const integrationTools = useMemo(
-    () => BUILTIN_TOOLS.filter((t) => t.type === "builtin_integration"),
-    [],
+    () => builtinTools.filter((t) => t.type === "builtin_integration"),
+    [builtinTools],
   );
 
   // Filtered tools based on category, status, and search query
@@ -179,6 +201,86 @@ export function AgentToolsPanel({
           </div>
         )}
       </div>
+
+      {attachedTools.length > 0 && (
+        <div className="rounded-[8px] border border-[#DCE1E8] bg-white p-5 shadow-xs space-y-4">
+          <div>
+            <h3 className="text-[15px] font-semibold text-[#202125]">Attached tool policies</h3>
+            <p className="mt-1 text-[13px] text-[#667085]">
+              Keep high-impact actions scoped to the right channels and confirmation level.
+            </p>
+          </div>
+          <div className="space-y-3">
+            {attachedTools.map((tool) => {
+              const policy = tool.policy ?? {};
+              const updatePolicy = (patch: NonNullable<AgentToolDefinition["policy"]>) =>
+                onUpdate({ ...tool, policy: { ...policy, ...patch } });
+              return (
+                <div key={tool.name} className="rounded-[6px] border border-[#EAECF0] p-3">
+                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-[14px] font-semibold text-[#202125]">{tool.name}</div>
+                      <div className="text-[12px] text-[#667085] truncate">{tool.description}</div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <select
+                        aria-label={`${tool.name} confirmation policy`}
+                        value={policy.confirmation ?? "user"}
+                        onChange={(event) => updatePolicy({ confirmation: event.target.value as "never" | "user" | "staff" })}
+                        className="h-8 rounded border border-[#DCE1E8] bg-white px-2 text-[12px]"
+                      >
+                        <option value="user">User confirmation</option>
+                        <option value="never">No confirmation</option>
+                        <option value="staff">Staff approval</option>
+                      </select>
+                      <select
+                        aria-label={`${tool.name} risk policy`}
+                        value={policy.risk ?? "read"}
+                        onChange={(event) => updatePolicy({ risk: event.target.value as "read" | "write" })}
+                        className="h-8 rounded border border-[#DCE1E8] bg-white px-2 text-[12px]"
+                      >
+                        <option value="read">Read</option>
+                        <option value="write">Write</option>
+                      </select>
+                      <input
+                        aria-label={`${tool.name} max calls per turn`}
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={policy.max_calls_per_turn ?? 3}
+                        onChange={(event) => updatePolicy({ max_calls_per_turn: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })}
+                        className="h-8 w-20 rounded border border-[#DCE1E8] px-2 text-[12px]"
+                        title="Maximum calls per turn"
+                      />
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-3 text-[12px] text-[#475467]">
+                    {(["chat", "voice", "webhook"] as const).map((channel) => {
+                      const channels = policy.allowed_channels ?? ["chat", "voice", "webhook"];
+                      return (
+                        <label key={channel} className="inline-flex items-center gap-1.5">
+                          <input
+                            type="checkbox"
+                            checked={channels.includes(channel)}
+                            onChange={(event) => {
+                              const next = event.target.checked
+                                ? [...new Set([...channels, channel])]
+                                : channels.filter((item) => item !== channel);
+                              updatePolicy({ allowed_channels: next });
+                            }}
+                            className="accent-[#FF571A]"
+                          />
+                          {channel}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* One Unified Tool Browser matching 4.png */}
       <div className="bg-white border border-[#DCE1E8] rounded-[8px] overflow-hidden shadow-xs flex flex-col md:flex-row min-h-[460px]">

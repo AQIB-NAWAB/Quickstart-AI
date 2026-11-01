@@ -243,9 +243,16 @@ export class OpenSearchClient {
     };
   }
 
-  async search(workspaceId: string, queryText: string, vector: number[], limit: number) {
+  async search(
+    workspaceId: string,
+    queryText: string,
+    vector: number[],
+    limit: number,
+    sourceIds?: string[],
+    searchMethod: "semantic" | "keyword" | "hybrid" = "hybrid",
+  ) {
     const index = this.config.opensearchIndex;
-    const body = buildHybridSearchBody(workspaceId, queryText, vector, limit);
+    const body = buildSearchBody(workspaceId, queryText, vector, limit, sourceIds, searchMethod);
     const res = await fetch(`${this.config.opensearchUrl}/${index}/_search`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -259,7 +266,10 @@ export class OpenSearchClient {
           size: limit,
           query: {
             bool: {
-              filter: [{ term: { workspace_id: workspaceId } }],
+              filter: [
+                { term: { workspace_id: workspaceId } },
+                ...(sourceIds?.length ? [{ terms: { source_id: sourceIds } }] : []),
+              ],
               must: [{ match: { text: queryText } }],
             },
           },
@@ -295,13 +305,17 @@ export function buildHybridSearchBody(
   queryText: string,
   vector: number[],
   limit: number,
+  sourceIds?: string[],
 ): Record<string, unknown> {
   const k = Math.min(Math.max(limit * 2, limit), 40);
   return {
     size: limit,
     query: {
       bool: {
-        filter: [{ term: { workspace_id: workspaceId } }],
+        filter: [
+          { term: { workspace_id: workspaceId } },
+          ...(sourceIds?.length ? [{ terms: { source_id: sourceIds } }] : []),
+        ],
         must: [
           {
             knn: {
@@ -325,4 +339,46 @@ export function buildHybridSearchBody(
       },
     },
   };
+}
+
+export function buildSearchBody(
+  workspaceId: string,
+  queryText: string,
+  vector: number[],
+  limit: number,
+  sourceIds: string[] | undefined,
+  searchMethod: "semantic" | "keyword" | "hybrid",
+): Record<string, unknown> {
+  if (searchMethod === "keyword") {
+    return {
+      size: limit,
+      query: {
+        bool: {
+          filter: [
+            { term: { workspace_id: workspaceId } },
+            ...(sourceIds?.length ? [{ terms: { source_id: sourceIds } }] : []),
+          ],
+          must: [{ match: { text: { query: queryText } } }],
+        },
+      },
+    };
+  }
+
+  if (searchMethod === "semantic") {
+    const k = Math.min(Math.max(limit * 2, limit), 40);
+    return {
+      size: limit,
+      query: {
+        bool: {
+          filter: [
+            { term: { workspace_id: workspaceId } },
+            ...(sourceIds?.length ? [{ terms: { source_id: sourceIds } }] : []),
+          ],
+          must: [{ knn: { vector: { vector, k } } }],
+        },
+      },
+    };
+  }
+
+  return buildHybridSearchBody(workspaceId, queryText, vector, limit, sourceIds);
 }

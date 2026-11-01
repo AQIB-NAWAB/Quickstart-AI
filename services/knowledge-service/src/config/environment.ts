@@ -35,6 +35,13 @@ export function loadKnowledgeConfig(): KnowledgeConfig {
     throw new Error("KNOWLEDGE_INTERNAL_TOKEN must be set and at least 32 characters");
   }
 
+  const requestedEmbeddingProvider = process.env.EMBEDDING_PROVIDER?.trim().toLowerCase();
+  const embeddingProvider: KnowledgeConfig["embeddingProvider"] =
+    requestedEmbeddingProvider === "openai" ||
+    (!requestedEmbeddingProvider && Boolean(process.env.OPENAI_API_KEY))
+      ? "openai"
+      : "fake";
+
   return {
     port: Number(process.env.PORT ?? process.env.KNOWLEDGE_PORT ?? 3009),
     databaseUrl:
@@ -51,7 +58,7 @@ export function loadKnowledgeConfig(): KnowledgeConfig {
     sqsRegion: process.env.AWS_REGION ?? "us-east-1",
     sqsQueueName: process.env.KNOWLEDGE_INGEST_QUEUE ?? "quickstart-knowledge-ingest",
     internalToken,
-    embeddingProvider: (process.env.EMBEDDING_PROVIDER ?? "fake") === "openai" ? "openai" : "fake",
+    embeddingProvider,
     openaiApiKey: process.env.OPENAI_API_KEY,
     workerPollMs: Number(process.env.KNOWLEDGE_WORKER_POLL_MS ?? 1000),
     s3Bucket: process.env.KNOWLEDGE_S3_BUCKET ?? process.env.S3_BUCKET,

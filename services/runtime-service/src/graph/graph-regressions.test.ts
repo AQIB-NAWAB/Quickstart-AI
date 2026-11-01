@@ -1,13 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { AgentGraph, AgentGraphNode } from "@quickstart/contracts";
-import { normalizeAgentGraph, validateAgentGraph } from "@quickstart/contracts";
+import {
+  DEFAULT_AGENT_CONFIGURATION,
+  normalizeAgentGraph,
+  validateAgentGraph,
+} from "@quickstart/contracts";
 import { GraphEngine } from "./engine.js";
 import { GraphNodeRegistry } from "./registry.js";
 import { GraphSessionStore } from "./session-store.js";
 import { setVariablePath, resolveVariablePath } from "./eval-utils.js";
 import type { KnowledgeClient } from "../clients/knowledge.client.js";
 import type { ModelGatewayClient } from "../clients/model-gateway.client.js";
+import type { AgentClient } from "../clients/agent.client.js";
 
 const node = (
   id: string,
@@ -195,6 +200,8 @@ test("session and traces cannot cross workspace boundaries", async () => {
   assert.equal(await store.getSession("b", "session"), null);
   assert.equal(await store.getTrace("b", a.runId), null);
   assert.deepEqual(await store.listTraces("b", "session"), []);
+  assert.equal((await store.listAgentTraces("a", "agent")).length, 1);
+  assert.deepEqual(await store.listAgentTraces("b", "agent"), []);
 });
 test("trace listeners are workspace scoped", async () => {
   const { store } = fixture();
@@ -205,6 +212,98 @@ test("trace listeners are workspace scoped", async () => {
   const event = { event_id: "e" } as never;
   await store.appendTraceEvent("a", "session", event);
   assert.equal(called, false);
+});
+test("agent trace index caps high-volume histories and honors retention", async () => {
+  const store = new GraphSessionStore();
+  const base = {
+    session_id: "session",
+    agent_id: "agent",
+    status: "succeeded" as const,
+    total_duration_ms: 1,
+    steps: [],
+    started_at: new Date().toISOString(),
+  };
+  for (let i = 0; i < 120; i += 1) {
+    await store.saveTrace(
+      { ...base, run_id: `run-${i}`, completed_at: new Date().toISOString() },
+      "a",
+      60,
+    );
+  }
+  assert.equal((await store.listAgentTraces("a", "agent", 200)).length, 100);
+  await store.saveTrace(
+    { ...base, run_id: "expired", completed_at: new Date().toISOString() },
+    "a",
+    0,
+  );
+  assert.ok(await store.getTrace("a", "expired"));
+});
+test("agent trace settings redact PII and can disable input/output capture", async () => {
+  const { engine } = fixture();
+  const g = graph(
+    [node("entry", "entrypoint"), node("end", "end_conversation")],
+    [["entry", "interaction_received", "end"]],
+  );
+  const redacted = await engine.executeTurn({
+    workspaceId: "a",
+    agentId: "agent",
+    conversationId: "trace-redaction",
+    sessionId: "trace-redaction",
+    graph: g,
+    releaseId: "release",
+    channel: "chat",
+    isPreview: false,
+    requestId: crypto.randomUUID(),
+    visitorMessage: "Email me at person@example.com",
+    agentConfiguration: DEFAULT_AGENT_CONFIGURATION,
+  });
+  const serialized = JSON.stringify(redacted.trace);
+  assert.match(serialized, /REDACTED_EMAIL/);
+  assert.doesNotMatch(serialized, /person@example\.com/);
+
+  const result = await engine.executeTurn({
+    workspaceId: "a",
+    agentId: "agent",
+    conversationId: "trace-settings",
+    sessionId: "trace-settings",
+    graph: g,
+    releaseId: "release",
+    channel: "chat",
+    isPreview: false,
+    requestId: crypto.randomUUID(),
+    visitorMessage: "Email me at person@example.com",
+    agentConfiguration: {
+      ...DEFAULT_AGENT_CONFIGURATION,
+      observability: { trace_retention_days: 1, capture_inputs: false, capture_outputs: false },
+    },
+  });
+  assert.equal(result.trace.steps[0]?.inputs, undefined);
+  assert.equal(result.trace.steps[0]?.outputs, undefined);
+});
+test("runtime executes 100 independent turns without cross-session trace leakage", async () => {
+  const { engine, store } = fixture();
+  const g = graph(
+    [node("entry", "entrypoint"), node("end", "end_conversation")],
+    [["entry", "interaction_received", "end"]],
+  );
+  for (let i = 0; i < 100; i += 1) {
+    const id = `load-${i}`;
+    const result = await engine.executeTurn({
+      workspaceId: "a",
+      agentId: "agent",
+      conversationId: id,
+      sessionId: id,
+      graph: g,
+      releaseId: "release",
+      channel: "chat",
+      isPreview: false,
+      requestId: crypto.randomUUID(),
+      visitorMessage: `hello-${i}`,
+    });
+    assert.equal(result.status, "completed");
+  }
+  assert.equal((await store.listAgentTraces("a", "agent", 100)).length, 100);
+  assert.deepEqual(await store.listAgentTraces("b", "agent"), []);
 });
 test("concurrent turns use exclusive session lock", async () => {
   const { store } = fixture();
@@ -266,6 +365,70 @@ test("internal channel model calls inherit frozen agent settings without browser
   assert.equal(called, true);
   assert.deepEqual(result.messages, ["Verified answer"]);
   assert.equal(result.status, "completed");
+});
+test("AI prompt can delegate to a different published specialist agent", async () => {
+  let requestAgentId = "";
+  let systemPrompt = "";
+  const modelGateway = {
+    async complete(body: { agent_id?: string; messages: Array<{ role: string; content: string }> }) {
+      requestAgentId = body.agent_id ?? "";
+      systemPrompt = body.messages.find((message) => message.role === "system")?.content ?? "";
+      return { content: "Specialist answer" };
+    },
+  } as unknown as ModelGatewayClient;
+  const agentClient = {
+    async getAgentWidget() {
+      return { production_version_id: "specialist-release" };
+    },
+    async getVersionWidget() {
+      return {
+        id: "specialist-release",
+        agent_id: "specialist",
+        snapshot: {
+          name: "Specialist",
+          instructions: "You are the billing specialist.",
+          model_settings: { profile: "openai", model_id: "specialist-model" },
+        },
+      };
+    },
+  } as unknown as AgentClient;
+  const engine = new GraphEngine(
+    new GraphNodeRegistry({ modelGateway, agentClient }),
+    new GraphSessionStore(),
+  );
+  const g = graph(
+    [
+      node("entry", "entrypoint"),
+      node("ai", "ai_prompt", {
+        delegate_agent_id: "specialist",
+        output_variable: "answer.text",
+      }),
+      node("response", "response", {
+        content_type: "variable_reference",
+        variable_name: "answer.text",
+      }),
+      node("end", "end_conversation"),
+    ],
+    [
+      ["entry", "interaction_received", "ai"],
+      ["ai", "success", "response"],
+      ["response", "message_sent", "end"],
+    ],
+  );
+  const result = await engine.executeTurn({
+    workspaceId: "a",
+    agentId: "parent",
+    conversationId: "c-delegate",
+    graph: g,
+    releaseId: "parent-release",
+    channel: "chat",
+    isPreview: false,
+    requestId: "request-delegate",
+    visitorMessage: "Why was I charged?",
+  });
+  assert.equal(requestAgentId, "specialist");
+  assert.match(systemPrompt, /billing specialist/);
+  assert.deepEqual(result.messages, ["Specialist answer"]);
 });
 test("internal channel knowledge retrieval uses service credentials and selected sources", async () => {
   let requestedWorkspace = "";
@@ -390,6 +553,52 @@ test("duplicate graph turn replays without emitting another message", async () =
     engine.executeTurn({ ...request, visitorMessage: "Changed" }),
     /different message/,
   );
+});
+
+test("ai prompt nodes emit generated text to the caller", async () => {
+  const store = new GraphSessionStore();
+  const model = {
+    complete: async () => ({
+      content: "The specialist found the answer.",
+      finish_reason: "stop",
+      usage: { input_tokens: 1, output_tokens: 1 },
+      provider: "fake",
+      model: "fake",
+      latency_ms: 1,
+    }),
+  } as unknown as ModelGatewayClient;
+  const engine = new GraphEngine(new GraphNodeRegistry({ modelGateway: model }), store);
+  const g = graph(
+    [
+      node("entry", "entrypoint"),
+      node("prompt", "ai_prompt", { instructions: "Answer the visitor.", output_variable: "answer" }),
+      node("end", "end_conversation"),
+    ],
+    [
+      ["entry", "interaction_received", "prompt"],
+      ["prompt", "success", "end"],
+    ],
+  );
+  const emitted: string[] = [];
+  const result = await engine.executeTurn({
+    workspaceId: "a",
+    agentId: "agent",
+    conversationId: "conversation",
+    sessionId: "prompt-session",
+    graph: g,
+    releaseId: null,
+    channel: "chat",
+    isPreview: true,
+    requestId: crypto.randomUUID(),
+    visitorMessage: "What is the answer?",
+    agentDefaults: { instructions: "", model_settings: { model: "fake" }, tools: [] },
+    onAssistantMessage: async (text) => {
+      emitted.push(text);
+    },
+  });
+  assert.equal(result.status, "completed");
+  assert.deepEqual(emitted, ["The specialist found the answer."]);
+  assert.deepEqual(result.messages, emitted);
 });
 
 test("mutating tools stay suspended until exact confirmation and cannot bypass it", async () => {

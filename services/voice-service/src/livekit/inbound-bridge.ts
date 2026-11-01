@@ -25,6 +25,7 @@ const BRIDGE_IDENTITY_PREFIX = "qs-bridge-";
 
 type BridgeSession = {
   room: Room;
+  workspaceId: string;
   sessionId: string;
   audioSource: AudioSource;
   track: LocalAudioTrack;
@@ -120,9 +121,17 @@ export class InboundMediaBridge implements InboundCallBridge {
       if (!createdSessionId) {
         throw sessionCreateError ?? new Error("Live voice session could not be created");
       }
+      // LiveKit delivers native PCM. Start the dual-track recorder before
+      // subscribing so caller audio and agent audio share the same call row.
+      await this.deps.sessions.startRecording(
+        createdSessionId,
+        input.workspaceId,
+        "audio/x-pcm16",
+      );
 
       const session: BridgeSession = {
         room,
+        workspaceId: input.workspaceId,
         sessionId: createdSessionId,
         audioSource,
         track,
@@ -208,6 +217,15 @@ export class InboundMediaBridge implements InboundCallBridge {
     this.sessions.delete(roomName);
 
     session.unsubSession();
+    await this.deps.sessions.finishRecording(
+      session.sessionId,
+      session.workspaceId,
+    ).catch((err: unknown) => {
+      this.deps.logger.warn("livekit.bridge.recording_finish_failed", {
+        room: roomName,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
     await session.reader?.cancel().catch(() => undefined);
     await session.room.disconnect().catch(() => undefined);
     session.audioSource.close();
@@ -252,7 +270,13 @@ export class InboundMediaBridge implements InboundCallBridge {
           if (done || session.closed) break;
           if (!value) continue;
           // AudioStream resamples natively to 16 kHz for Deepgram.
-          this.deps.sessions.pushAudio(session.sessionId, frameToPcm16(value));
+          const pcm = frameToPcm16(value);
+          this.deps.sessions.pushAudio(session.sessionId, pcm);
+          void this.deps.sessions.appendRecording(
+            session.sessionId,
+            session.workspaceId,
+            pcm,
+          );
         }
       } catch (err) {
         if (!session.closed) {

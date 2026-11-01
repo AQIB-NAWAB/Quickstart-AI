@@ -10,6 +10,10 @@ const MIGRATIONS: { version: string; file: string }[] = [
   { version: "004_agent_voice_settings", file: "004_agent_voice_settings.sql" },
   { version: "005_custom_tools", file: "005_custom_tools.sql" },
   { version: "006_agent_canvas_graph", file: "006_agent_canvas_graph.sql" },
+  { version: "007_agent_configuration", file: "007_agent_configuration.sql" },
+  { version: "008_backfill_legacy_knowledge", file: "008_backfill_legacy_knowledge.sql" },
+  { version: "009_agent_canary", file: "009_agent_canary.sql" },
+  { version: "010_scheduled_releases", file: "010_scheduled_releases.sql" },
 ];
 
 function resolveMigrationSql(file: string): string {
@@ -42,7 +46,9 @@ export async function runAgentMigrations(pool: Pool): Promise<void> {
     try {
       await client.query("BEGIN");
       await client.query(sql);
-      await client.query(`INSERT INTO schema_migrations (version) VALUES ($1)`, [migration.version]);
+      await client.query(`INSERT INTO schema_migrations (version) VALUES ($1)`, [
+        migration.version,
+      ]);
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK");

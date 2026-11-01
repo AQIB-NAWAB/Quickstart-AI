@@ -7,6 +7,7 @@ import type {
   PhoneNumberStatus,
   PhoneNumberType,
   RepositoryResult,
+  SimulatedInboundCallResult,
   UpdatePhoneNumberInput,
   WorkspacePhoneNumber,
   VoiceRepository,
@@ -225,6 +226,30 @@ export class ApiVoiceRepository implements VoiceRepository {
       ? (result.data.calls as Record<string, unknown>[]).map(mapCall)
       : [];
     return { status: "ready", data: calls };
+  }
+
+  async stopLiveInboundCall(
+    workspaceId: string,
+    callId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<{ stopped: boolean }>> {
+    return requestJson(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/inbound/${encodeURIComponent(callId)}/stop`,
+      { method: "POST" },
+      signal,
+    );
+  }
+
+  async simulateInboundCall(
+    workspaceId: string,
+    input: { agent_id: string; utterance_text: string; caller?: string },
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<{ result: SimulatedInboundCallResult }>> {
+    return requestJson(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/inbound/simulate`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) },
+      signal,
+    );
   }
 
   async getInboundCall(

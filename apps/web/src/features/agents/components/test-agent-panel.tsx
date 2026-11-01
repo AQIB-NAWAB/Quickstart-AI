@@ -110,6 +110,7 @@ export function TestAgentPanel({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const activeSessionRef = useRef<string | null>(null);
+  const sendLockRef = useRef(false);
 
   const isPublished = Boolean(agent.production_version_id);
 
@@ -154,7 +155,8 @@ export function TestAgentPanel({
 
   async function sendMessage(textToSend: string) {
     const text = textToSend.trim();
-    if (!text || isSending || !isPublished) return;
+    if (!text || sendLockRef.current || isSending || !isPublished) return;
+    sendLockRef.current = true;
 
     setError(null);
     setInput("");
@@ -168,6 +170,7 @@ export function TestAgentPanel({
         if (initRes.error || !initRes.conversationId) {
           setError(initRes.error?.message || "Could not start test conversation.");
           setInput(text);
+          sendLockRef.current = false;
           return;
         }
         currentConvId = initRes.conversationId;
@@ -176,6 +179,7 @@ export function TestAgentPanel({
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to initialize test conversation.");
         setInput(text);
+        sendLockRef.current = false;
         return;
       }
     }
@@ -252,6 +256,7 @@ export function TestAgentPanel({
         setError(err instanceof Error ? err.message : "Turn request failed.");
       }
     } finally {
+      sendLockRef.current = false;
       if (activeSessionRef.current === sessionId) {
         setIsSending(false);
         setLiveTools([]);
@@ -287,16 +292,19 @@ export function TestAgentPanel({
         if (e.target === e.currentTarget) handleClose?.();
       }}
     >
-      <div className="w-full max-w-[720px] h-[720px] max-h-[calc(100dvh-32px)] bg-white rounded-[14px] border border-[#DCE1E8] shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
+      <div className="w-full max-w-[720px] h-[720px] max-h-[calc(100dvh-32px)] bg-white rounded-[10px] border border-[#E4E7EC] shadow-xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="px-5 py-3.5 flex items-center justify-between border-b border-[#EDF0F2] bg-white shrink-0">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-[8px] bg-[#F8F9FB] border border-[#DCE1E8] flex items-center justify-center text-[#202125] shrink-0">
-              <AgentOutlineIcon className="w-5 h-5 text-[#202125]" />
+            <div className="w-9 h-9 rounded-[8px] bg-[#F8F9FA] border border-[#E4E7EC] flex items-center justify-center text-[#475467] shrink-0">
+              <AgentOutlineIcon className="w-5 h-5 text-[#475467]" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <h2 id="test-agent-panel-title" className="text-[16px] font-semibold text-[#202125] truncate">
+                <h2
+                  id="test-agent-panel-title"
+                  className="text-[16px] font-semibold text-[#202125] truncate"
+                >
                   Test Agent Workbench
                 </h2>
                 {releaseNumber && (
@@ -313,17 +321,17 @@ export function TestAgentPanel({
             type="button"
             onClick={handleClose}
             aria-label="Close test dialog"
-            className="p-1.5 text-[#667085] hover:text-[#202125] hover:bg-[#F8F9FB] rounded-[6px] transition-colors"
+            className="p-1.5 text-[#667085] hover:text-[#202125] hover:bg-[#F8F9FA] rounded-[6px] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Status & Reset Toolbar */}
-        <div className="px-5 py-2.5 bg-[#FAFBFD] border-b border-[#EDF0F2] flex items-center justify-between text-[13px] shrink-0">
+        <div className="px-5 py-2.5 bg-[#FCFCFD] border-b border-[#EDF0F2] flex items-center justify-between text-[13px] shrink-0">
           {isPublished ? (
             <div className="flex items-center gap-2 font-medium text-[#202125]">
-              <span className="w-2 h-2 rounded-full bg-[#22C55E]" aria-hidden="true" />
+              <span className="w-2 h-2 rounded-full bg-[#12B76A]" aria-hidden="true" />
               <span className="text-[12px]">
                 {releaseNumber ? `Live release #${releaseNumber} loaded` : "Live published runtime"}
               </span>
@@ -340,7 +348,7 @@ export function TestAgentPanel({
               type="button"
               onClick={handleReset}
               title="Reset conversation session"
-              className="inline-flex items-center gap-1.5 text-[#475467] hover:text-[#202125] font-medium border border-[#DCE1E8] px-2.5 py-1 rounded-[6px] bg-white hover:bg-[#F8F9FB] transition-colors text-[12px]"
+              className="inline-flex items-center gap-1.5 text-[#475467] hover:text-[#202125] font-medium border border-[#D0D5DD] px-2.5 py-1 rounded-[6px] bg-white hover:bg-[#F8F9FA] transition-colors text-[12px]"
             >
               <RotateCcw className="w-3 h-3" />
               Reset Session
@@ -353,10 +361,12 @@ export function TestAgentPanel({
           {messages.length === 0 ? (
             /* Empty State with One-Click Test Presets */
             <div className="flex-1 flex flex-col items-center justify-center text-center px-4 py-4">
-              <div className="w-11 h-11 rounded-[10px] bg-[#FFF6F2] border border-[#FFD9CC] text-[#FF571A] flex items-center justify-center mb-2.5">
-                <Sparkles className="w-5 h-5 text-[#FF571A]" />
+              <div className="w-11 h-11 rounded-[8px] bg-[#F8F9FA] border border-[#E4E7EC] text-[#667085] flex items-center justify-center mb-2.5">
+                <Sparkles className="w-5 h-5 text-[#667085]" />
               </div>
-              <h3 className="text-[16px] font-semibold text-[#202125]">Interactive Test Workbench</h3>
+              <h3 className="text-[15px] font-semibold text-[#202125]">
+                Interactive Test Workbench
+              </h3>
               <p className="mt-1 text-[13px] text-[#667085] max-w-[360px]">
                 {isPublished
                   ? "Test conversation flow, tool invocations, and guardrails with one-click presets."
@@ -365,7 +375,7 @@ export function TestAgentPanel({
 
               {isPublished && (
                 <div className="mt-5 w-full max-w-[520px]">
-                  <div className="text-[11px] uppercase font-bold tracking-wider text-[#98A2B3] mb-2.5 text-left">
+                  <div className="text-[11px] uppercase font-medium tracking-[0.04em] text-[#667085] mb-2.5 text-left">
                     One-Click Test Presets
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-left">
@@ -376,21 +386,18 @@ export function TestAgentPanel({
                           key={preset.id}
                           type="button"
                           onClick={() => handlePresetClick(preset.prompt)}
-                          className="p-3 rounded-[10px] border border-[#DCE1E8] bg-white hover:bg-[#F8F9FB] hover:border-[#CCD2D8] transition-all flex flex-col items-start text-left shadow-xs group"
+                          className="p-3 rounded-[8px] border border-[#E4E7EC] bg-white hover:bg-[#FAFAFA] hover:border-[#D0D5DD] transition-colors flex flex-col items-start text-left group"
                         >
                           <div className="w-full flex items-center justify-between mb-1">
                             <div className="flex items-center gap-1.5">
-                              <div
-                                className="w-6 h-6 rounded-[6px] flex items-center justify-center shrink-0"
-                                style={{ backgroundColor: "#F8F9FB" }}
-                              >
-                                <Icon className="w-3.5 h-3.5 text-[#202125]" />
+                              <div className="w-6 h-6 rounded-[6px] bg-[#F8F9FA] border border-[#EAECF0] flex items-center justify-center shrink-0">
+                                <Icon className="w-3.5 h-3.5 text-[#475467]" />
                               </div>
-                              <span className="text-[13px] font-semibold text-[#202125] group-hover:text-[#FF571A] transition-colors">
+                              <span className="text-[13px] font-semibold text-[#202125]">
                                 {preset.title}
                               </span>
                             </div>
-                            <span className="text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-[4px] bg-[#F2F4F7] text-[#475467]">
+                            <span className="text-[10px] font-medium uppercase tracking-[0.04em] px-1.5 py-0.5 rounded-[4px] bg-[#F8F9FA] border border-[#EAECF0] text-[#667085]">
                               {preset.badge}
                             </span>
                           </div>
@@ -431,19 +438,22 @@ export function TestAgentPanel({
                       }`}
                     >
                       {/* Live tool execution indicator during turn */}
-                      {isAssistant && isSending && msg.id === messages[messages.length - 1]?.id && liveTools.length > 0 && (
-                        <div className="flex flex-wrap gap-1.5 mb-2.5">
-                          {liveTools.map((tc, idx) => (
-                            <div
-                              key={idx}
-                              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-[12px] font-medium bg-[#FFF6F2] border border-[#FFD9CC] text-[#FF571A] shadow-xs animate-pulse"
-                            >
-                              <Zap className="w-3.5 h-3.5 text-[#FF571A]" />
-                              <span>Calling {tc.name}...</span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                      {isAssistant &&
+                        isSending &&
+                        msg.id === messages[messages.length - 1]?.id &&
+                        liveTools.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 mb-2.5">
+                            {liveTools.map((tc, idx) => (
+                              <div
+                                key={idx}
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[6px] text-[12px] font-medium bg-[#F8F9FA] border border-[#E4E7EC] text-[#475467] animate-pulse"
+                              >
+                                <Zap className="w-3.5 h-3.5 text-[#667085]" />
+                                <span>Calling {tc.name}...</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                       {/* Completed Tool Execution Badges & Diagnostics */}
                       {isAssistant && msg.toolCalls && msg.toolCalls.length > 0 && (
@@ -465,7 +475,7 @@ export function TestAgentPanel({
                                   className="w-full flex items-center justify-between px-3 py-1.5 hover:bg-[#F8F9FB] transition-colors text-left"
                                 >
                                   <div className="flex items-center gap-2 min-w-0">
-                                    <Zap className="w-3.5 h-3.5 text-[#FF571A] shrink-0" />
+                                    <Zap className="w-3.5 h-3.5 text-[#667085] shrink-0" />
                                     <span className="font-mono font-semibold text-[#202125] truncate">
                                       {tc.name}
                                     </span>
@@ -566,7 +576,9 @@ export function TestAgentPanel({
                       {msg.usage?.total_tokens !== undefined && (
                         <>
                           <span>•</span>
-                          <span title={`Input: ${msg.usage.input_tokens ?? 0}, Output: ${msg.usage.output_tokens ?? 0}`}>
+                          <span
+                            title={`Input: ${msg.usage.input_tokens ?? 0}, Output: ${msg.usage.output_tokens ?? 0}`}
+                          >
                             {msg.usage.total_tokens} tokens
                           </span>
                         </>
@@ -598,7 +610,7 @@ export function TestAgentPanel({
           {/* Quick Preset Chip Strip */}
           {isPublished && (
             <div className="mb-2.5 flex items-center gap-1.5 overflow-x-auto pb-1 text-[12px]">
-              <span className="text-[11px] font-semibold text-[#667085] uppercase tracking-wider shrink-0 mr-1">
+              <span className="text-[11px] font-medium text-[#667085] uppercase tracking-[0.04em] shrink-0 mr-1">
                 Presets:
               </span>
               {TEST_PRESETS.map((preset) => {
@@ -610,9 +622,9 @@ export function TestAgentPanel({
                     onClick={() => handlePresetClick(preset.prompt)}
                     disabled={isSending}
                     title={preset.prompt}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-[6px] border border-[#DCE1E8] bg-white hover:bg-[#F8F9FB] hover:border-[#CCD2D8] text-[#344054] text-[12px] font-medium transition-colors shrink-0 disabled:opacity-40"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-[6px] border border-[#D0D5DD] bg-white hover:bg-[#F8F9FA] hover:border-[#98A2B3] text-[#344054] text-[12px] font-medium transition-colors shrink-0 disabled:opacity-40"
                   >
-                    <Icon className="w-3 h-3 text-[#FF571A]" />
+                    <Icon className="w-3 h-3 text-[#667085]" />
                     <span>{preset.shortLabel}</span>
                   </button>
                 );
@@ -620,7 +632,7 @@ export function TestAgentPanel({
             </div>
           )}
 
-          <div className="relative border border-[#DCE1E8] rounded-[10px] focus-within:border-[#FF571A] focus-within:ring-1 focus-within:ring-[#FF571A] transition-all bg-white shadow-xs">
+          <div className="relative border border-[#D0D5DD] rounded-[8px] focus-within:border-[#98A2B3] focus-within:ring-1 focus-within:ring-[#E4E7EC] transition-all bg-white">
             <textarea
               ref={textareaRef}
               rows={2}
@@ -628,7 +640,9 @@ export function TestAgentPanel({
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={!isPublished || isSending}
-              placeholder={isPublished ? "Message your agent..." : "Publish to enable live testing..."}
+              placeholder={
+                isPublished ? "Message your agent..." : "Publish to enable live testing..."
+              }
               className="w-full resize-none p-3 pr-12 text-[14px] text-[#202125] bg-transparent focus:outline-none placeholder-[#98A2B3] disabled:opacity-50 min-h-[68px]"
             />
             <button

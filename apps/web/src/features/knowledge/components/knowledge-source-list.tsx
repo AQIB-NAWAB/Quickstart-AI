@@ -106,7 +106,7 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [addModalOpen, setAddModalOpen] = useState(false);
   const [activeTemplate, setActiveTemplate] = useState<{ name: string; content: string } | null>(
-    null
+    null,
   );
   const [deletingSource, setDeletingSource] = useState<KnowledgeSource | null>(null);
 
@@ -160,7 +160,7 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
         }
       }
     },
-    [workspaceId, debouncedSearch, statusFilter, typeFilter]
+    [workspaceId, debouncedSearch, statusFilter, typeFilter],
   );
 
   useEffect(() => {
@@ -236,6 +236,19 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
     }
   }
 
+  const handleDrawerClose = useCallback(() => {
+    setDrawerOpen(false);
+    setSelectedSourceId(null);
+  }, []);
+
+  const handleDeleteRequest = useCallback((source: KnowledgeSource) => {
+    setDeletingSource(source);
+  }, []);
+
+  const handleSourceUpdated = useCallback((updated: KnowledgeSource) => {
+    setSources((prev) => prev.map((source) => (source.id === updated.id ? updated : source)));
+  }, []);
+
   function handleUseTemplate(template: (typeof TEMPLATES)[number]) {
     setActiveTemplate({
       name: template.title,
@@ -244,8 +257,7 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
     setAddModalOpen(true);
   }
 
-  const isFiltering =
-    Boolean(debouncedSearch) || statusFilter !== "all" || typeFilter !== "all";
+  const isFiltering = Boolean(debouncedSearch) || statusFilter !== "all" || typeFilter !== "all";
 
   return (
     <div className="console-feature knowledge-feature space-y-6">
@@ -268,7 +280,8 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
             </span>
           </div>
           <p className="text-xs text-neutral-500 max-w-2xl leading-relaxed">
-            Upload documents, company policies, and FAQs for your agents to use as ground-truth context.
+            Upload documents, company policies, and FAQs for your agents to use as ground-truth
+            context.
           </p>
         </div>
 
@@ -346,9 +359,7 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
             aria-label="Refresh sources"
             className="p-2.5 rounded-10 border border-border-faint bg-white text-neutral-500 hover:text-accent-black hover:bg-neutral-50 transition-colors shrink-0 disabled:opacity-50 min-h-[42px] min-w-[42px] flex items-center justify-center shadow-xs"
           >
-            <RotateCcw
-              className={`w-4 h-4 ${isRefreshing ? "animate-spin text-heat-100" : ""}`}
-            />
+            <RotateCcw className={`w-4 h-4 ${isRefreshing ? "animate-spin text-heat-100" : ""}`} />
           </button>
         </div>
       </div>
@@ -380,9 +391,7 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
             <div className="w-14 h-14 rounded-full bg-neutral-100 text-neutral-400 flex items-center justify-center mx-auto border border-border-faint">
               <BookOpen className="w-7 h-7 text-neutral-600" />
             </div>
-            <h2 className="text-lg font-bold text-accent-black">
-              Add your first knowledge source
-            </h2>
+            <h2 className="text-lg font-bold text-accent-black">Add your first knowledge source</h2>
             <p className="text-xs text-neutral-500 leading-relaxed">
               Connect business documents or plain text to give agents reliable business context.
             </p>
@@ -403,9 +412,7 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
                     <div className="w-8 h-8 rounded-8 bg-white border border-border-faint flex items-center justify-center text-heat-100 shadow-xs">
                       <Sparkles className="w-4 h-4" />
                     </div>
-                    <h3 className="text-xs font-bold text-accent-black">
-                      {tmpl.title}
-                    </h3>
+                    <h3 className="text-xs font-bold text-accent-black">{tmpl.title}</h3>
                     <p className="text-[11px] text-neutral-500 leading-relaxed">
                       {tmpl.description}
                     </p>
@@ -452,12 +459,24 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="border-b border-border-faint bg-neutral-50/60 text-neutral-500 font-medium">
-                    <th scope="col" className="py-3 px-4 font-semibold">Source</th>
-                    <th scope="col" className="py-3 px-4 font-semibold">Type</th>
-                    <th scope="col" className="py-3 px-4 font-semibold">Status</th>
-                    <th scope="col" className="py-3 px-4 font-semibold">Chunks</th>
-                    <th scope="col" className="py-3 px-4 font-semibold hidden md:table-cell">Updated</th>
-                    <th scope="col" className="py-3 px-4 font-semibold text-right">Actions</th>
+                    <th scope="col" className="py-3 px-4 font-semibold">
+                      Source
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-semibold">
+                      Type
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-semibold">
+                      Status
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-semibold">
+                      Chunks
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-semibold hidden md:table-cell">
+                      Updated
+                    </th>
+                    <th scope="col" className="py-3 px-4 font-semibold text-right">
+                      Actions
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border-faint">
@@ -621,16 +640,19 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
           {/* Directory Footer (Image 1) */}
           <div className="p-4 rounded-12 bg-white border border-border-faint flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-neutral-500 shadow-xs">
             <div>
-              Showing {sources.length} of {totalFiltered} {totalFiltered === 1 ? "source" : "sources"}
+              Showing {sources.length} of {totalFiltered}{" "}
+              {totalFiltered === 1 ? "source" : "sources"}
               {totalWorkspaceCount > 0 && (
                 <span className="ml-1 text-neutral-400">
-                  • {statusCounts.ready} ready, {statusCounts.indexing} indexing, {statusCounts.failed} failed
+                  • {statusCounts.ready} ready, {statusCounts.indexing} indexing,{" "}
+                  {statusCounts.failed} failed
                 </span>
               )}
             </div>
 
             <p className="text-[11px] text-neutral-400 text-center sm:text-right">
-              Ready sources provide context for agent responses. Review indexed chunks to verify the content.
+              Ready sources provide context for agent responses. Review indexed chunks to verify the
+              content.
             </p>
           </div>
         </div>
@@ -641,16 +663,9 @@ export function KnowledgeSourceList({ workspaceId }: KnowledgeSourceListProps) {
         workspaceId={workspaceId}
         sourceId={selectedSourceId}
         open={drawerOpen}
-        onClose={() => {
-          setDrawerOpen(false);
-          setSelectedSourceId(null);
-        }}
-        onDeleteRequest={(src) => {
-          setDeletingSource(src);
-        }}
-        onSourceUpdated={(updated) => {
-          setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-        }}
+        onClose={handleDrawerClose}
+        onDeleteRequest={handleDeleteRequest}
+        onSourceUpdated={handleSourceUpdated}
       />
 
       {/* Add Source Modal (Image 2, 3, 4) */}

@@ -81,7 +81,6 @@ export function setupTwilioMediaStreamServer(options: MediaStreamServerOptions):
   const {
     server,
     callsRepo,
-    recordings: _recordings,
     liveSessionManager,
     usageIngest,
     logger,
@@ -92,7 +91,11 @@ export function setupTwilioMediaStreamServer(options: MediaStreamServerOptions):
 
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const url = new URL(req.url ?? "", "http://localhost");
-    if (url.pathname === path || url.pathname === `/voice${path}` || url.pathname === "/twiml/stream") {
+    if (
+      url.pathname === path ||
+      url.pathname === `/voice${path}` ||
+      url.pathname === "/twiml/stream"
+    ) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req);
       });
@@ -125,7 +128,10 @@ export function setupTwilioMediaStreamServer(options: MediaStreamServerOptions):
 
       switch (msg.event) {
         case "connected":
-          logger.info("telephony.media_stream.handshake", { protocol: msg.protocol, version: msg.version });
+          logger.info("telephony.media_stream.handshake", {
+            protocol: msg.protocol,
+            version: msg.version,
+          });
           break;
 
         case "start": {
@@ -149,16 +155,18 @@ export function setupTwilioMediaStreamServer(options: MediaStreamServerOptions):
 
           // Link provider call sid and stream sid in DB
           if (workspaceId && callId) {
-            await callsRepo.updateState(workspaceId, callId, {
-              state: "live",
-              providerCallSid: callSid,
-              streamSid,
-            }).catch((err) => {
-              logger.warn("telephony.media_stream.call_update_failed", {
-                callId,
-                error: err instanceof Error ? err.message : String(err),
+            await callsRepo
+              .updateState(workspaceId, callId, {
+                state: "live",
+                providerCallSid: callSid,
+                streamSid,
+              })
+              .catch((err) => {
+                logger.warn("telephony.media_stream.call_update_failed", {
+                  callId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
               });
-            });
           }
 
           // If liveSessionManager is available, initiate live voice session
@@ -171,13 +179,13 @@ export function setupTwilioMediaStreamServer(options: MediaStreamServerOptions):
               });
 
               // Start recording
-              await liveSessionManager.startRecording(liveSessionId, workspaceId, "audio/x-mulaw");
+              await liveSessionManager.startRecording(liveSessionId, workspaceId, "audio/x-pcm16");
 
               // Subscribe to live audio emitted from the AI agent
               unsubscribeLive = liveSessionManager.subscribe(liveSessionId, (event) => {
                 if (event.type === "audio" && event.data) {
                   const pcm = Buffer.from(event.data, "base64");
-                  const mulawB64 = pcm16ToTwilioMulawBase64(pcm, 16000);
+                  const mulawB64 = pcm16ToTwilioMulawBase64(pcm, event.sample_rate ?? 16000);
                   audioSequence++;
 
                   if (ws.readyState === WebSocket.OPEN) {
@@ -231,9 +239,9 @@ export function setupTwilioMediaStreamServer(options: MediaStreamServerOptions):
           if (liveSessionManager && liveSessionId) {
             liveSessionManager.pushAudio(liveSessionId, pcm16);
 
-            // Append raw mulaw frame to dual-track recording
-            const rawMulaw = Buffer.from(msg.media.payload, "base64");
-            void liveSessionManager.appendRecording(liveSessionId, workspaceId, rawMulaw);
+            // Append the decoded caller track. The live session finalizes both
+            // caller and agent PCM tracks as playable WAV files.
+            void liveSessionManager.appendRecording(liveSessionId, workspaceId, pcm16);
           }
           break;
         }
@@ -269,11 +277,13 @@ export function setupTwilioMediaStreamServer(options: MediaStreamServerOptions):
 
       const durationSeconds = Math.max(1, Math.round((Date.now() - startTime) / 1000));
       if (workspaceId && callId) {
-        await callsRepo.updateState(workspaceId, callId, {
-          state: "completed",
-          durationSeconds,
-          endedAt: new Date(),
-        }).catch(() => undefined);
+        await callsRepo
+          .updateState(workspaceId, callId, {
+            state: "completed",
+            durationSeconds,
+            endedAt: new Date(),
+          })
+          .catch(() => undefined);
 
         if (usageIngest) {
           usageIngest.emit({

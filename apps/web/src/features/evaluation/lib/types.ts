@@ -199,51 +199,51 @@ export interface EvaluationRepository {
     workspaceId: string,
     agentId: string,
     datasetId?: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<RepositoryResult<EvaluationOverviewData>>;
 
   listDatasets(
     workspaceId: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<RepositoryResult<EvaluationDataset[]>>;
 
   getDataset(
     workspaceId: string,
     datasetId: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<RepositoryResult<{ dataset: EvaluationDataset; cases: EvaluationCase[] }>>;
 
   createDataset(
     workspaceId: string,
-    data: { name: string; description?: string; tags?: string[] }
+    data: { agentId?: string; name: string; description?: string; tags?: string[] },
   ): Promise<RepositoryResult<EvaluationDataset>>;
 
   saveTestCase(
     workspaceId: string,
     datasetId: string,
-    caseData: Partial<EvaluationCase> & { input: string; name: string }
+    caseData: Partial<EvaluationCase> & { input: string; name: string },
   ): Promise<RepositoryResult<EvaluationCase>>;
 
   importCases(
     workspaceId: string,
     datasetId: string,
-    cases: Partial<EvaluationCase>[]
+    cases: Partial<EvaluationCase>[],
   ): Promise<RepositoryResult<{ importedCount: number; newRevision: number }>>;
 
   listRuns(
     workspaceId: string,
     filter?: { agentId?: string; status?: string },
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<RepositoryResult<EvaluationRun[]>>;
 
   getRun(
     workspaceId: string,
     runId: string,
-    signal?: AbortSignal
+    signal?: AbortSignal,
   ): Promise<RepositoryResult<{ run: EvaluationRun; results: EvaluationCaseResult[] }>>;
 
   startRun(
     workspaceId: string,
-    data: { agentId: string; versionId: string; datasetId: string }
+    data: { agentId: string; versionId: string; datasetId: string },
   ): Promise<RepositoryResult<EvaluationRun>>;
 }

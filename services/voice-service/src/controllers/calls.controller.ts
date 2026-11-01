@@ -2,6 +2,7 @@ import { requestIdFromResponse, sendPlatformJson, type RequestHandler } from "@q
 import type { CallsRepository } from "../repository/calls.repository.js";
 import type { RecordingStore } from "../repository/recording.store.js";
 import type { CallSessionOrchestrator } from "../session/orchestrator.js";
+import type { ConversationClient } from "../clients/conversation.client.js";
 import { routeParam } from "../lib/route-param.js";
 import type { CallDirection, VoiceMode } from "@quickstart/contracts";
 
@@ -9,6 +10,7 @@ export function createCallsController(
   calls: CallsRepository,
   orchestrator: CallSessionOrchestrator,
   recordings: RecordingStore,
+  conversations: ConversationClient,
 ) {
   return {
     listInbound: (async (req, res) => {
@@ -51,6 +53,38 @@ export function createCallsController(
         request_id: requestIdFromResponse(res),
         calls: rows.map(toStaffCall),
       });
+    }) as RequestHandler,
+
+    simulateInbound: (async (req, res) => {
+      const workspaceId = routeParam(req.params.workspaceId);
+      const body = (req.body ?? {}) as { agent_id?: string; utterance_text?: string; caller?: string };
+      const agentId = body.agent_id?.trim();
+      const utteranceText = body.utterance_text?.trim();
+      if (!agentId || !utteranceText) {
+        sendPlatformJson(res, 400, {
+          request_id: requestIdFromResponse(res),
+          error: { code: "VALIDATION_FAILED", message: "agent_id and utterance_text are required" },
+        });
+        return;
+      }
+
+      const conversation = await conversations.createWidgetConversation({ workspaceId, agentId });
+      const result = await orchestrator.simulateCall({
+        workspaceId,
+        conversationId: conversation.id,
+        agentId,
+        direction: "inbound",
+        caller: body.caller?.trim() || "+15550192834",
+        utterance: { bytes: Buffer.from(utteranceText, "utf8"), encoding: "fake", sampleRateHz: 8000 },
+        voiceMode: "cascade",
+        telephonyProvider: "fake",
+        authHeaders: {
+          authorization: typeof req.headers.authorization === "string" ? req.headers.authorization : "",
+        },
+        requestId: requestIdFromResponse(res),
+      });
+
+      sendPlatformJson(res, 201, { request_id: requestIdFromResponse(res), result });
     }) as RequestHandler,
 
     getInbound: (async (req, res) => {

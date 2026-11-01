@@ -42,12 +42,27 @@ export function createHttpServer(options: CreateAgentHttpServerOptions): Applica
     graphAuthGuard: async (req, res, next) => {
       try {
         const token = bearerTokenFromHeader(req.headers.authorization);
-        if (!token || !jwtSecret) throw new AppError({ code: ErrorCode.UNAUTHORIZED, message: "A verified access token is required for canvas operations." });
+        if (!token || !jwtSecret)
+          throw new AppError({
+            code: ErrorCode.UNAUTHORIZED,
+            message: "A verified access token is required for canvas operations.",
+          });
         const claims = await verifyAccessToken(token, jwtSecret);
         res.locals.actorUserId = claims.sub;
-        if (res.locals.tenantContext) res.locals.tenantContext = { workspaceId: res.locals.tenantContext.workspaceId, actorId: claims.sub };
+        if (res.locals.tenantContext)
+          res.locals.tenantContext = {
+            workspaceId: res.locals.tenantContext.workspaceId,
+            actorId: claims.sub,
+          };
         next();
-      } catch { next(new AppError({code:ErrorCode.UNAUTHORIZED,message:"Invalid or missing canvas access token."})); }
+      } catch {
+        next(
+          new AppError({
+            code: ErrorCode.UNAUTHORIZED,
+            message: "Invalid or missing canvas access token.",
+          }),
+        );
+      }
     },
     internalAuth: createRequireInternalTokenMiddleware(options.internalToken),
     tenantMiddleware: [authGuard, tenantGuard],

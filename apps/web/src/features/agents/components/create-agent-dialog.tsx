@@ -242,11 +242,58 @@ export function CreateAgentDialog({
         voice: voiceEnabled,
       },
       model_settings: {
-        model: "gpt-4o-mini",
-        model_id: "gpt-4o-mini",
+        model: "gpt-6-luna",
+        model_id: "gpt-6-luna",
         profile: "openai",
         temperature: 0.3,
-        max_tokens: 1024,
+        max_tokens: 4096,
+        reasoning_effort: "low",
+        verbosity: "medium",
+      },
+      voice: voiceEnabled
+        ? {
+            voice_mode: "cascade",
+            language: "en-US",
+            tts_voice_id: "default",
+            max_response_chars: 500,
+            turn_detection_profile_id: "default",
+            recording_enabled: true,
+          }
+        : undefined,
+      configuration: {
+        knowledge: {
+          enabled: true,
+          source_ids: [],
+          search_method: "hybrid",
+          max_results: 5,
+          failure_policy: "open",
+        },
+        memory: {
+          enabled: true,
+          subject_key_template: "anon:{visitor_id}",
+          max_facts: 20,
+          failure_policy: "open",
+          allow_runtime_writes: true,
+        },
+        guardrails: {
+          enabled: true,
+          block_prompt_injection: true,
+          redact_pii: true,
+          blocked_topics: [],
+          allowed_topics: [],
+          violation_action: "refuse",
+          custom_instructions: "",
+        },
+        release: {
+          require_approval: false,
+          required_checklist: [],
+          auto_rollback_error_rate_pct: null,
+        },
+        observability: {
+          trace_retention_days: 7,
+          capture_inputs: true,
+          capture_outputs: true,
+        },
       },
       tools: [],
     });

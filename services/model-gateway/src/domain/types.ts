@@ -12,8 +12,9 @@ export type ProviderCompletionInput = {
   tools?: ModelToolDefinition[];
   temperature?: number;
   maxTokens?: number;
-  responseFormat?: { type: "json_object" };
-  reasoningEffort?: "low" | "medium" | "high";
+responseFormat?: { type: "json_object" };
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  verbosity?: "low" | "medium" | "high";
   context: ProviderCallContext;
 };
 
@@ -21,6 +22,7 @@ export type ProviderCompletionOutput = {
   content: string;
   finishReason: string;
   toolCalls?: import("@quickstart/contracts").ModelToolCall[];
+  providerItems?: unknown[];
   usage: { inputTokens: number; outputTokens: number };
 };
 

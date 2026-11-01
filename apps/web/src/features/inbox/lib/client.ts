@@ -130,6 +130,17 @@ export async function getWidgetLiveCall(
   return error ? { error } : { live: data!.live, call: data!.call };
 }
 
+export async function stopWidgetLiveCall(
+  workspaceId: string,
+  conversationId: string,
+): Promise<{ error?: ApiError["error"] }> {
+  const { error } = await bff(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/widget-live/${encodeURIComponent(conversationId)}/stop`,
+    { method: "POST" },
+  );
+  return { error };
+}
+
 export async function joinWidgetCall(
   workspaceId: string,
   conversationId: string,

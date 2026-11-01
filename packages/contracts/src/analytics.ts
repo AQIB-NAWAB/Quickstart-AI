@@ -46,6 +46,16 @@ export type AnalyticsServiceUsage = {
   is_unpriced: boolean;
 };
 
+export type AgentOperationalMetrics = {
+  tool_calls: number;
+  successful_tool_calls: number;
+  failed_tool_calls: number;
+  tool_success_rate_pct: number | null;
+  handoffs: number;
+  evaluation_runs: number;
+  evaluation_pass_rate_pct: number | null;
+};
+
 export type MetricCoverage = "complete" | "partial" | "unavailable";
 
 export type MetricCoverageIndicators = {
@@ -67,6 +77,7 @@ export type AnalyticsResponse = {
   daily_tokens: AnalyticsDailyTokenBucket[];
   daily_latency: AnalyticsDailyLatencyBucket[];
   usage_by_service: AnalyticsServiceUsage[];
+  operational_metrics?: AgentOperationalMetrics;
   previous_period?: {
     from: string;
     to: string;

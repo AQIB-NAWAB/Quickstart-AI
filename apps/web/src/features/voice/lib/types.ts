@@ -55,6 +55,14 @@ export interface VoiceInboundSummary {
   activeCalls: number;
 }
 
+export interface SimulatedInboundCallResult {
+  call_id: string;
+  state: string;
+  user_text: string;
+  assistant_text: string;
+  timings: { stt_ms: number; runtime_ms: number; tts_ms: number; total_ms: number };
+}
+
 export interface InboundCallDetail extends InboundCall {
   recordingAvailable: boolean;
   recordingDurationSeconds?: number;
@@ -197,6 +205,18 @@ export interface VoiceRepository {
     workspaceId: string,
     signal?: AbortSignal,
   ): Promise<RepositoryResult<InboundCall[]>>;
+
+  stopLiveInboundCall(
+    workspaceId: string,
+    callId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<{ stopped: boolean }>>;
+
+  simulateInboundCall(
+    workspaceId: string,
+    input: { agent_id: string; utterance_text: string; caller?: string },
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<{ result: SimulatedInboundCallResult }>>;
 
   getInboundCall(
     workspaceId: string,

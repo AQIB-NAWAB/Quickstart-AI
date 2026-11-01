@@ -99,6 +99,19 @@ test("AnalyticsService rejects invalid date formats and inverted ranges", async 
   );
 });
 
+test("AnalyticsService validates an optional per-agent filter", async () => {
+  const service = new AnalyticsService(createMockRepository());
+  await assert.rejects(
+    async () => service.getRollup(VALID_WORKSPACE, { agentId: "not-a-uuid" }),
+    (err: unknown) => {
+      assert.ok(err instanceof AppError);
+      assert.equal(err.code, ErrorCode.VALIDATION_FAILED);
+      assert.match(err.message, /agent_id/);
+      return true;
+    },
+  );
+});
+
 test("AnalyticsService normalizes YYYY-MM-DD date inputs and queries repository", async () => {
   let capturedOpts: any = null;
   const mockRepo = {
@@ -155,6 +168,12 @@ test("AnalyticsService normalizes YYYY-MM-DD date inputs and queries repository"
     "to date string should end at end of day UTC",
   );
   assert.equal(capturedOpts.timezone, "America/New_York");
+  await service.getRollup(VALID_WORKSPACE, {
+    from: "2026-05-01",
+    to: "2026-05-07",
+    agentId: "a0000000-0000-4000-a000-000000000002",
+  });
+  assert.equal(capturedOpts.agentId, "a0000000-0000-4000-a000-000000000002");
   assert.equal(result.summary.total_tokens, 200);
   assert.equal(result.summary.latency_p95_ms, 200);
 });

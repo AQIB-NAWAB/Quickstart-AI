@@ -4,6 +4,9 @@ import type { UsageIngestClient } from "../clients/usage.client.js";
 export type UsageRecord = {
   workspace_id: string;
   request_id: string;
+  agent_id?: string;
+  conversation_id?: string;
+  channel?: string;
   provider: string;
   model: string;
   input_tokens: number;
@@ -32,6 +35,9 @@ export function logModelUsage(
       input_tokens: record.input_tokens,
       output_tokens: record.output_tokens,
       latency_ms: record.latency_ms,
+      ...(record.agent_id ? { agent_id: record.agent_id } : {}),
+      ...(record.conversation_id ? { conversation_id: record.conversation_id } : {}),
+      ...(record.channel ? { channel: record.channel } : {}),
     },
   });
 }

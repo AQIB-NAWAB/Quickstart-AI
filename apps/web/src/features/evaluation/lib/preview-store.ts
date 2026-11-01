@@ -1,18 +1,18 @@
 import {
-SAMPLE_CASES_SUPPORT_BASICS,
-SAMPLE_CASE_RESULTS_RUN_2048,
-SAMPLE_COMPARISON_POINTS,
-SAMPLE_DATASETS,
-SAMPLE_RUNS,
+  SAMPLE_CASES_SUPPORT_BASICS,
+  SAMPLE_CASE_RESULTS_RUN_2048,
+  SAMPLE_COMPARISON_POINTS,
+  SAMPLE_DATASETS,
+  SAMPLE_RUNS,
 } from "./fixtures";
 import type {
-EvaluationCase,
-EvaluationCaseResult,
-EvaluationDataset,
-EvaluationOverviewData,
-EvaluationRepository,
-EvaluationRun,
-RepositoryResult,
+  EvaluationCase,
+  EvaluationCaseResult,
+  EvaluationDataset,
+  EvaluationOverviewData,
+  EvaluationRepository,
+  EvaluationRun,
+  RepositoryResult,
 } from "./types";
 
 class EvaluationPreviewStore implements EvaluationRepository {
@@ -30,11 +30,10 @@ class EvaluationPreviewStore implements EvaluationRepository {
   async getOverview(
     _workspaceId: string,
     agentId: string,
-    datasetId = "support-basics"
+    datasetId = "support-basics",
   ): Promise<RepositoryResult<EvaluationOverviewData>> {
     void _workspaceId;
-    const selectedDs =
-      this.datasets.find((d) => d.id === datasetId) || this.datasets[0];
+    const selectedDs = this.datasets.find((d) => d.id === datasetId) || this.datasets[0];
     const latestRun = this.runs.find((r) => r.status === "completed") || null;
 
     return {
@@ -57,9 +56,7 @@ class EvaluationPreviewStore implements EvaluationRepository {
     };
   }
 
-  async listDatasets(
-    _workspaceId: string
-  ): Promise<RepositoryResult<EvaluationDataset[]>> {
+  async listDatasets(_workspaceId: string): Promise<RepositoryResult<EvaluationDataset[]>> {
     void _workspaceId;
     return {
       status: "ready",
@@ -69,7 +66,7 @@ class EvaluationPreviewStore implements EvaluationRepository {
 
   async getDataset(
     _workspaceId: string,
-    datasetId: string
+    datasetId: string,
   ): Promise<RepositoryResult<{ dataset: EvaluationDataset; cases: EvaluationCase[] }>> {
     void _workspaceId;
     const ds = this.datasets.find((d) => d.id === datasetId);
@@ -88,12 +85,12 @@ class EvaluationPreviewStore implements EvaluationRepository {
 
   async createDataset(
     workspaceId: string,
-    data: { name: string; description?: string }
+    data: { agentId?: string; name: string; description?: string },
   ): Promise<RepositoryResult<EvaluationDataset>> {
     const newDs: EvaluationDataset = {
       id: `ds_${Math.random().toString(36).substring(2, 8)}`,
       workspaceId,
-      agentId: "all",
+      agentId: data.agentId ?? "all",
       name: data.name,
       description: data.description,
       tags: [],
@@ -111,7 +108,7 @@ class EvaluationPreviewStore implements EvaluationRepository {
   async saveTestCase(
     _workspaceId: string,
     datasetId: string,
-    caseData: Partial<EvaluationCase> & { input: string; name: string }
+    caseData: Partial<EvaluationCase> & { input: string; name: string },
   ): Promise<RepositoryResult<EvaluationCase>> {
     void _workspaceId;
     const cases = this.casesByDataset.get(datasetId) || [];
@@ -182,7 +179,7 @@ class EvaluationPreviewStore implements EvaluationRepository {
   async importCases(
     _workspaceId: string,
     datasetId: string,
-    newCases: Partial<EvaluationCase>[]
+    newCases: Partial<EvaluationCase>[],
   ): Promise<RepositoryResult<{ importedCount: number; newRevision: number }>> {
     void _workspaceId;
     const cases = this.casesByDataset.get(datasetId) || [];
@@ -227,7 +224,7 @@ class EvaluationPreviewStore implements EvaluationRepository {
 
   async listRuns(
     _workspaceId: string,
-    filter?: { agentId?: string; status?: string }
+    filter?: { agentId?: string; status?: string },
   ): Promise<RepositoryResult<EvaluationRun[]>> {
     void _workspaceId;
     let result = [...this.runs];
@@ -242,7 +239,7 @@ class EvaluationPreviewStore implements EvaluationRepository {
 
   async getRun(
     _workspaceId: string,
-    runId: string
+    runId: string,
   ): Promise<RepositoryResult<{ run: EvaluationRun; results: EvaluationCaseResult[] }>> {
     void _workspaceId;
     const run = this.runs.find((r) => r.id === runId);
@@ -261,7 +258,7 @@ class EvaluationPreviewStore implements EvaluationRepository {
 
   async startRun(
     workspaceId: string,
-    data: { agentId: string; versionId: string; datasetId: string }
+    data: { agentId: string; versionId: string; datasetId: string },
   ): Promise<RepositoryResult<EvaluationRun>> {
     const ds = this.datasets.find((d) => d.id === data.datasetId) || this.datasets[0];
     const newRun: EvaluationRun = {

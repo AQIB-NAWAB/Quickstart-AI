@@ -37,7 +37,7 @@ export class OpenAiSpeechToText implements SpeechToText {
   async transcribe(chunk: AudioChunk, signal?: AbortSignal): Promise<TranscriptResult> {
     const started = Date.now();
     const baseUrl = (this.options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
-    const model = this.options.model ?? "gpt-4o-transcribe";
+    const model = this.options.model ?? "gpt-transcribe";
     const { name, mime } = filenameFor(chunk);
     const form = new FormData();
     form.append("model", model);

@@ -11,13 +11,7 @@ type Props = {
   onCancel: () => void;
 };
 
-export function DeleteAgentModal({
-  isOpen,
-  agentName,
-  isDeleting,
-  onConfirm,
-  onCancel,
-}: Props) {
+export function DeleteAgentModal({ isOpen, agentName, isDeleting, onConfirm, onCancel }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const cancelBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -70,7 +64,9 @@ export function DeleteAgentModal({
             Delete agent
           </h2>
           <p className="mt-1.5 text-[13px] text-[#667085] leading-relaxed">
-            Are you sure you want to delete <strong className="font-semibold text-[#202125]">{agentName}</strong>? This action cannot be undone and will permanently remove this agent and its configurations.
+            Are you sure you want to permanently delete{" "}
+            <strong className="font-semibold text-[#202125]">{agentName}</strong>? Only archived
+            agents without a live release can be deleted.
           </p>
         </div>
 

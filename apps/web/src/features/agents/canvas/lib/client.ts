@@ -1,4 +1,5 @@
 import type {
+  AgentAiEditProposal,
   AgentGraph,
   GraphExecutionTrace,
   GraphSessionState,
@@ -68,6 +69,22 @@ export async function validateAgentGraph(
     },
   );
   return handleResponse(res);
+}
+
+export async function proposeAiAgentEdit(
+  workspaceId: string,
+  agentId: string,
+  prompt: string,
+): Promise<AgentAiEditProposal> {
+  const res = await fetch(
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/ai-edit`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+    },
+  );
+  return handleResponse<AgentAiEditProposal>(res);
 }
 
 export async function publishAgentGraph(
@@ -163,10 +180,11 @@ export async function resetPreviewSession(
 export async function listPreviewTraces(
   workspaceId: string,
   agentId: string,
-  sessionId: string,
+  sessionId?: string,
 ): Promise<{ traces: GraphExecutionTrace[] }> {
+  const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : "";
   const res = await fetch(
-    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/preview/traces?sessionId=${encodeURIComponent(sessionId)}`,
+    `/api/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/preview/traces${query}`,
     { method: "GET" },
   );
   return handleResponse(res);

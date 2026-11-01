@@ -82,6 +82,7 @@ export interface CallsRepository {
     callId: string,
     patch: Partial<{
       state: CallState;
+      voiceMode: VoiceMode;
       conversationId: string | null;
       agentId: string | null;
       agentVersionId: string | null;
@@ -89,6 +90,7 @@ export interface CallsRepository {
       failureCode: string | null;
       timeToFirstAudioMs: number | null;
       recordingObjectKey: string | null;
+      callerRecordingObjectKey: string | null;
       waveformPeaks: unknown;
       channelCount: number;
       stereoAvailable: boolean;
@@ -178,6 +180,7 @@ export class PgCallsRepository implements CallsRepository {
     callId: string,
     patch: Partial<{
       state: CallState;
+      voiceMode: VoiceMode;
       conversationId: string | null;
       agentId: string | null;
       agentVersionId: string | null;
@@ -185,6 +188,7 @@ export class PgCallsRepository implements CallsRepository {
       failureCode: string | null;
       timeToFirstAudioMs: number | null;
       recordingObjectKey: string | null;
+      callerRecordingObjectKey: string | null;
       endedAt: Date | null;
       providerCallSid?: string | null;
       streamSid?: string | null;
@@ -201,12 +205,14 @@ export class PgCallsRepository implements CallsRepository {
     const { rows } = await this.pool.query<VoiceCallRow>(
       `UPDATE voice_calls SET
         state = COALESCE($3, state),
+        voice_mode = COALESCE($23, voice_mode),
         conversation_id = COALESCE($4, conversation_id),
         agent_id = COALESCE($5, agent_id),
         agent_version_id = COALESCE($6, agent_version_id),
         failure_code = COALESCE($7, failure_code),
         time_to_first_audio_ms = COALESCE($8, time_to_first_audio_ms),
         recording_object_key = COALESCE($9, recording_object_key),
+        caller_recording_object_key = COALESCE($22, caller_recording_object_key),
         ended_at = COALESCE($10, ended_at),
         provider_call_sid = COALESCE($11, provider_call_sid),
         stream_sid = COALESCE($12, stream_sid),
@@ -244,6 +250,8 @@ export class PgCallsRepository implements CallsRepository {
         patch.phoneNumberId === undefined ? null : patch.phoneNumberId,
         patch.sipCallId === undefined ? null : patch.sipCallId,
         patch.caller === undefined ? null : patch.caller,
+        patch.callerRecordingObjectKey === undefined ? null : patch.callerRecordingObjectKey,
+        patch.voiceMode === undefined ? null : patch.voiceMode,
       ],
     );
     return rows[0] ?? null;
@@ -387,6 +395,19 @@ export class PgCallsRepository implements CallsRepository {
   }
 
   async listLive(workspaceId: string, direction?: CallDirection): Promise<VoiceCallRow[]> {
+    await this.pool.query(
+      `UPDATE voice_calls
+       SET state = 'completed',
+           ended_at = COALESCE(ended_at, NOW()),
+           duration_seconds = GREATEST(
+             1,
+             FLOOR(EXTRACT(EPOCH FROM (COALESCE(ended_at, NOW()) - started_at)))::integer
+           )
+       WHERE workspace_id = $1
+         AND state IN ('ringing', 'live')
+         AND started_at <= NOW() - INTERVAL '1 hour'`,
+      [workspaceId],
+    );
     const { rows } = await this.pool.query<VoiceCallRow>(
       `SELECT * FROM voice_calls
        WHERE workspace_id = $1
@@ -523,6 +544,7 @@ export class MemoryCallsRepository implements CallsRepository {
     callId: string,
     patch: Partial<{
       state: CallState;
+      voiceMode: VoiceMode;
       conversationId: string | null;
       agentId: string | null;
       agentVersionId: string | null;
@@ -530,6 +552,7 @@ export class MemoryCallsRepository implements CallsRepository {
       failureCode: string | null;
       timeToFirstAudioMs: number | null;
       recordingObjectKey: string | null;
+      callerRecordingObjectKey: string | null;
       endedAt: Date | null;
       providerCallSid?: string | null;
       streamSid?: string | null;
@@ -546,6 +569,7 @@ export class MemoryCallsRepository implements CallsRepository {
     const row = this.calls.get(callId);
     if (!row || row.workspace_id !== workspaceId) return null;
     if (patch.state !== undefined) row.state = patch.state;
+    if (patch.voiceMode !== undefined) row.voice_mode = patch.voiceMode;
     if (patch.conversationId !== undefined) row.conversation_id = patch.conversationId;
     if (patch.agentId !== undefined) row.agent_id = patch.agentId;
     if (patch.agentVersionId !== undefined) row.agent_version_id = patch.agentVersionId;
@@ -553,6 +577,9 @@ export class MemoryCallsRepository implements CallsRepository {
     if (patch.failureCode !== undefined) row.failure_code = patch.failureCode;
     if (patch.timeToFirstAudioMs !== undefined) row.time_to_first_audio_ms = patch.timeToFirstAudioMs;
     if (patch.recordingObjectKey !== undefined) row.recording_object_key = patch.recordingObjectKey;
+    if (patch.callerRecordingObjectKey !== undefined) {
+      row.caller_recording_object_key = patch.callerRecordingObjectKey;
+    }
     if (patch.endedAt !== undefined) row.ended_at = patch.endedAt;
     if (patch.providerCallSid !== undefined) row.provider_call_sid = patch.providerCallSid;
     if (patch.streamSid !== undefined) row.stream_sid = patch.streamSid;

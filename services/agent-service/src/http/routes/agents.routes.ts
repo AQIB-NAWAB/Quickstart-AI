@@ -21,6 +21,18 @@ export const createAgentsRoutes: RouteModule<AgentHttpContext> = (ctx) => {
     asyncHandler(agentsCtrl.listAgents),
   );
   router.get(
+    "/v1/workspaces/:workspaceId/agents/catalog",
+    ...chain,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_READ),
+    asyncHandler(agentsCtrl.getCatalog),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/agents/archive-batch",
+    ...chain,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_UPDATE),
+    asyncHandler(agentsCtrl.archiveAgents),
+  );
+  router.get(
     "/v1/workspaces/:workspaceId/agents/:agentId",
     ...chain,
     requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_READ),
@@ -37,6 +49,36 @@ export const createAgentsRoutes: RouteModule<AgentHttpContext> = (ctx) => {
     ...chain,
     requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_DELETE),
     asyncHandler(agentsCtrl.deleteAgent),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/agents/:agentId/archive",
+    ...chain,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_UPDATE),
+    asyncHandler(agentsCtrl.archiveAgent),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/agents/:agentId/canary",
+    ...chain,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_PUBLISH),
+    asyncHandler(agentsCtrl.setCanary),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/agents/:agentId/schedule-release",
+    ...chain,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_PUBLISH),
+    asyncHandler(agentsCtrl.scheduleRelease),
+  );
+  router.get(
+    "/v1/workspaces/:workspaceId/agents/:agentId/environments",
+    ...chain,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_READ),
+    asyncHandler(agentsCtrl.getEnvironmentComparison),
+  );
+  router.get(
+    "/v1/workspaces/:workspaceId/agents/:agentId/release-readiness",
+    ...chain,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_READ),
+    asyncHandler(agentsCtrl.getReleaseReadiness),
   );
 
   router.get(
@@ -59,6 +101,13 @@ export const createAgentsRoutes: RouteModule<AgentHttpContext> = (ctx) => {
     ctx.graphAuthGuard,
     requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_READ),
     asyncHandler(agentsCtrl.validateGraph),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/agents/:agentId/ai-edit",
+    ...chain,
+    ctx.graphAuthGuard,
+    requireWorkspacePermission(workspaceAccess, WORKSPACE_PERMISSIONS.AGENT_UPDATE),
+    asyncHandler(agentsCtrl.proposeAiEdit),
   );
 
   router.post(

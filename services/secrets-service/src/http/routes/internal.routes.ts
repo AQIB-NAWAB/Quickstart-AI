@@ -6,6 +6,12 @@ export const createInternalRoutes: RouteModule<SecretsHttpContext> = (ctx) => {
   const router = createServiceRouter();
   const ctrl = createInternalSecretsController(ctx.secrets);
 
+  router.get(
+    "/internal/workspaces/:workspaceId/secrets",
+    ctx.internalAuth,
+    asyncHandler(ctrl.list),
+  );
+
   // Internal-only: returns plaintext value. Guarded by internal bearer token only.
   router.get(
     "/internal/workspaces/:workspaceId/secrets/:name/value",

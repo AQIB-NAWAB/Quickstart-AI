@@ -53,70 +53,74 @@ export async function streamWidgetTurn(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let turn: WidgetTurnResult | null = null;
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary !== -1) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
-      boundary = buffer.indexOf("\n\n");
-      let eventName = "message";
-      let dataLine = "";
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event:")) eventName = line.slice(6).trim();
-        else if (line.startsWith("data:")) dataLine += line.slice(5).trim();
-      }
-      if (!dataLine) continue;
-      let data: {
-        delta?: string;
-        text?: string;
-        turn?: {
-          deduplicated: boolean;
-          conversation_id: string;
-          agent_id: string;
-          agent_version_id: string;
-          assistant_message: { id: string; text: string; seq: number };
-          user_message?: { id: string; text: string; seq: number };
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.search(/\r?\n\r?\n/);
+      while (boundary !== -1) {
+        const block = buffer.slice(0, boundary);
+        const separatorLength = buffer.slice(boundary).startsWith("\r\n") ? 4 : 2;
+        buffer = buffer.slice(boundary + separatorLength);
+        boundary = buffer.search(/\r?\n\r?\n/);
+        let eventName = "message";
+        let dataLine = "";
+        for (const line of block.split(/\r?\n/)) {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim();
+          else if (line.startsWith("data:")) dataLine += `${line.slice(5).replace(/^ /, "")}\n`;
+        }
+        if (!dataLine) continue;
+        let data: {
+          delta?: string;
+          text?: string;
+          turn?: {
+            deduplicated: boolean;
+            conversation_id: string;
+            agent_id: string;
+            agent_version_id: string;
+            assistant_message: { id: string; text: string; seq: number };
+            user_message?: { id: string; text: string; seq: number };
+          };
+          message?: string;
         };
-        message?: string;
-      };
-      try {
-        data = JSON.parse(dataLine);
-      } catch {
-        continue;
-      }
-      if (eventName === "token" && data.delta) onToken(data.delta);
-      else if (eventName === "nudge" && data.text) input.onNudge?.(data.text);
-      else if (eventName === "transfer") input.onTransfer?.();
-      else if (eventName === "done" && data.turn) {
-        turn = {
-          assistant_text: data.turn.assistant_message.text,
-          agent_id: data.turn.agent_id,
-          agent_version_id: data.turn.agent_version_id,
-          conversation_id: data.turn.conversation_id,
-          latency_ms: Date.now() - started,
-          deduplicated: data.turn.deduplicated,
-          assistant_message: data.turn.assistant_message,
-          user_message: data.turn.user_message,
-        };
-      } else if (eventName === "error") {
-        throw new AppError({
-          code: ErrorCode.UPSTREAM_UNAVAILABLE,
-          message: data.message ?? "Widget stream error",
-        });
+        try {
+          data = JSON.parse(dataLine);
+        } catch {
+          continue;
+        }
+        if (eventName === "token" && data.delta) onToken(data.delta);
+        else if (eventName === "nudge" && data.text) input.onNudge?.(data.text);
+        else if (eventName === "transfer") input.onTransfer?.();
+        else if (eventName === "done" && data.turn) {
+          return {
+            assistant_text: data.turn.assistant_message.text,
+            agent_id: data.turn.agent_id,
+            agent_version_id: data.turn.agent_version_id,
+            conversation_id: data.turn.conversation_id,
+            latency_ms: Date.now() - started,
+            deduplicated: data.turn.deduplicated,
+            assistant_message: data.turn.assistant_message,
+            user_message: data.turn.user_message,
+          };
+        } else if (eventName === "error") {
+          throw new AppError({
+            code: ErrorCode.UPSTREAM_UNAVAILABLE,
+            message: data.message ?? "Widget stream error",
+          });
+        }
       }
     }
-  }
 
-  if (!turn) {
     throw new AppError({
       code: ErrorCode.UPSTREAM_UNAVAILABLE,
       message: "Widget stream ended before completion",
     });
+  } finally {
+    // Completion is an SSE event, not an HTTP socket close. Release even on
+    // provider errors or callback failures so interrupted calls do not leak streams.
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock();
   }
-  return turn;
 }

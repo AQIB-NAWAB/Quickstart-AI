@@ -34,9 +34,9 @@ import { InspectorPanel } from "./inspectors/inspector-panel";
 import { TestWorkbench } from "./workbench/test-workbench";
 import { ExecutionTracePanel } from "./workbench/execution-trace-panel";
 import { CanvasControls } from "./canvas-controls";
-import { CanvasMinimap } from "./canvas-minimap";
 import { CanvasEmptyState } from "./canvas-empty-state";
 import { PublishReleaseDialog } from "./publishing/publish-release-dialog";
+import { AiAgentBuilderModal } from "./ai-agent-builder-modal";
 import { graphToFlowElements, flowElementsToGraph } from "../lib/graph-adapter";
 import {
   saveAgentGraph,
@@ -45,6 +45,7 @@ import {
   initPreviewSession,
   executePreviewTurn,
   resetPreviewSession,
+  proposeAiAgentEdit,
 } from "../lib/client";
 import type {
   CanvasFlowNode,
@@ -118,6 +119,12 @@ const InnerCanvas: React.FC<AgentCanvasEditorProps> = (props) => {
   const [isTurnExecuting, setIsTurnExecuting] = useState(false);
   const [validationIssues, setValidationIssues] = useState<GraphValidationIssue[]>([]);
   const [isPublishDialogOpen, setIsPublishDialogOpen] = useState(false);
+  const [isAiBuilderOpen, setIsAiBuilderOpen] = useState(false);
+  const [aiProposal, setAiProposal] = useState<
+    import("@quickstart/contracts").AgentAiEditProposal | null
+  >(null);
+  const [isAiBuilderLoading, setIsAiBuilderLoading] = useState(false);
+  const [aiBuilderError, setAiBuilderError] = useState<string | null>(null);
   const [addMenu, setAddMenu] = useState<{
     position: { x: number; y: number };
     flowPosition: { x: number; y: number };
@@ -469,6 +476,44 @@ const InnerCanvas: React.FC<AgentCanvasEditorProps> = (props) => {
       setNotice(error instanceof Error ? error.message : "Configuration could not be reviewed.");
     }
   };
+  const openAiBuilder = () => {
+    if (saveState !== "saved") {
+      setNotice("Save the current draft before asking AI to update it.");
+      return;
+    }
+    setAiProposal(null);
+    setAiBuilderError(null);
+    setIsAiBuilderOpen(true);
+  };
+  const generateAiEdit = async (prompt: string) => {
+    setAiBuilderError(null);
+    setAiProposal(null);
+    setIsAiBuilderLoading(true);
+    try {
+      const proposal = await proposeAiAgentEdit(workspaceId, agentId, prompt);
+      setAiProposal(proposal);
+    } catch (error) {
+      setAiBuilderError(
+        error instanceof Error ? error.message : "Could not build an AI workflow draft.",
+      );
+    } finally {
+      setIsAiBuilderLoading(false);
+    }
+  };
+  const applyAiEdit = () => {
+    if (!aiProposal?.validation.valid) return;
+    const elements = graphToFlowElements(structuredClone(aiProposal.graph));
+    commit({
+      ...latest.current,
+      ...elements,
+      settings: { ...latest.current.settings, ...aiProposal.settings },
+    });
+    setSelectedNodeId(null);
+    setIsInspectorOpen(false);
+    setIsAiBuilderOpen(false);
+    setAiProposal(null);
+    setNotice("AI changes applied to the draft. Review the canvas before publishing.");
+  };
   const decoratedNodes = nodes.map((n) => ({
     ...n,
     data: {
@@ -496,8 +541,10 @@ const InnerCanvas: React.FC<AgentCanvasEditorProps> = (props) => {
         onUndo={() => travel(-1)}
         onRedo={() => travel(1)}
         onTestAgent={() => void openWorkbench()}
+        onAiEdit={openAiBuilder}
         onPublish={() => void openPublish()}
         actionsDisabled={saveState !== "saved" || !nodes.length || isTurnExecuting}
+        aiDisabled={saveState !== "saved" || isTurnExecuting}
       />
       {notice && (
         <div
@@ -597,7 +644,6 @@ const InnerCanvas: React.FC<AgentCanvasEditorProps> = (props) => {
             >
               <Background variant={BackgroundVariant.Dots} gap={18} size={0.8} color="#D9DDE3" />
               <CanvasControls />
-              {nodes.length > 0 && <CanvasMinimap />}
             </ReactFlow>
             {!nodes.length && (
               <CanvasEmptyState
@@ -703,10 +749,6 @@ const InnerCanvas: React.FC<AgentCanvasEditorProps> = (props) => {
           onTabChange={(tab) => {
             if (tab !== workbenchTab) {
               setWorkbenchTab(tab);
-              setPreviewSessionId(null);
-              setPreviewMessages([]);
-              setPreviewSessionState(null);
-              setActiveTrace(null);
             }
           }}
           draftRevision={previewRevision}
@@ -743,6 +785,22 @@ const InnerCanvas: React.FC<AgentCanvasEditorProps> = (props) => {
           const result = await publishAgentGraph(workspaceId, agentId, revision.current, notes);
           setLiveRelease(result.release_number);
         }}
+      />
+      <AiAgentBuilderModal
+        isOpen={isAiBuilderOpen}
+        agentName={agentName}
+        proposal={aiProposal}
+        isLoading={isAiBuilderLoading}
+        error={aiBuilderError}
+        onClose={() => {
+          if (!isAiBuilderLoading) setIsAiBuilderOpen(false);
+        }}
+        onReset={() => {
+          setAiProposal(null);
+          setAiBuilderError(null);
+        }}
+        onGenerate={(prompt) => void generateAiEdit(prompt)}
+        onApply={applyAiEdit}
       />
     </div>
   );

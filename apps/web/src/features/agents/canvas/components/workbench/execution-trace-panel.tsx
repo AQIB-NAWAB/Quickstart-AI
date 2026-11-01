@@ -29,7 +29,9 @@ export const ExecutionTracePanel: React.FC<ExecutionTracePanelProps> = ({
           </span>
         )}
         <span className="ml-auto text-xs text-neutral-500">
-          {trace ? `${trace.total_duration_ms ?? trace.duration_ms ?? 0} ms` : ""}
+          {trace
+            ? `${trace.total_duration_ms ?? trace.duration_ms ?? 0} ms${trace.release_id ? ` · release ${trace.release_id.slice(0, 8)}` : ""}`
+            : ""}
         </span>
       </header>
       {!event ? (

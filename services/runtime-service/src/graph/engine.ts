@@ -2,6 +2,7 @@ import { normalizeAgentGraph } from "@quickstart/contracts";
 import { setVariablePath } from "./eval-utils.js";
 import { randomUUID } from "node:crypto";
 import type {
+  AgentConfiguration,
   AgentGraph,
   AgentGraphNode,
   GraphExecutionTrace,
@@ -29,6 +30,9 @@ export type RunGraphTurnInput = {
   timeoutMs?: number;
   abortSignal?: AbortSignal;
   agentDefaults?: GraphSessionState["agent_defaults"];
+  agentConfiguration?: AgentConfiguration;
+  subjectKey?: string;
+  allowTools?: boolean;
   onHandoff?: () => Promise<void>;
   humanReleased?: boolean;
   onAssistantMessage?: (text: string) => Promise<void>;
@@ -46,6 +50,25 @@ export type RunGraphTurnResult = {
 };
 
 const MAX_STEPS_PER_TURN = 25;
+
+function redactPii(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value
+      .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+      .replace(/\b(?:\+?\d[\d\s().-]{7,}\d)\b/g, "[REDACTED_PHONE]")
+      .replace(/\b(?:\d[ -]*?){13,19}\b/g, "[REDACTED_CARD]");
+  }
+  if (Array.isArray(value)) return value.map(redactPii);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, redactPii(item)]));
+  }
+  return value;
+}
+
+function traceValue(value: unknown, redact: boolean, capture: boolean): unknown {
+  if (!capture) return undefined;
+  return redact ? redactPii(value) : value;
+}
 
 export class GraphEngine {
   constructor(
@@ -179,6 +202,7 @@ export class GraphEngine {
 
     let stepCount = 0;
     let turnStatus: RunGraphTurnResult["status"] = "succeeded";
+    let visitorMessageConsumed = false;
 
     // 2. Main Step Loop
     while (stepCount < MAX_STEPS_PER_TURN) {
@@ -245,7 +269,7 @@ export class GraphEngine {
         isPreview,
         graph,
         sessionState: session,
-        visitorMessage,
+        visitorMessage: visitorMessageConsumed ? undefined : visitorMessage,
         authHeaders,
         requestId,
         turnIndex: session.turn_count,
@@ -255,6 +279,9 @@ export class GraphEngine {
         checkpoint: () => this.sessionStore.saveSession(session),
         onAssistantMessage,
         onTraceEvent: emitTraceEvent,
+        agentConfiguration: input.agentConfiguration,
+        subjectKey: input.subjectKey,
+        allowTools: input.allowTools,
       };
 
       let result: NodeExecutionResult;
@@ -303,6 +330,9 @@ export class GraphEngine {
       // Update session variables
       if (result.outputVariables) {
         session.variables = { ...session.variables, ...result.outputVariables };
+      }
+      if (currentNode.type === "conversation" && visitorMessage) {
+        visitorMessageConsumed = true;
       }
 
       stepCount += 1;
@@ -379,9 +409,14 @@ export class GraphEngine {
     await this.sessionStore.saveSession(session);
 
     const totalDuration = Date.now() - startTime;
+    const observability = input.agentConfiguration?.observability;
+    const redact = input.agentConfiguration?.guardrails.redact_pii !== false;
     const executionTrace: GraphExecutionTrace = {
       run_id: runId,
       session_id: sessionId,
+      agent_id: agentId,
+      release_id: releaseId,
+      is_preview: isPreview,
       status:
         turnStatus === "failed"
           ? "failed"
@@ -389,12 +424,23 @@ export class GraphEngine {
             ? "waiting_for_input"
             : "succeeded",
       total_duration_ms: totalDuration,
-      steps: traceEvents,
+      steps: traceEvents.map((event) => ({
+        ...event,
+        inputs: traceValue(event.inputs, redact, observability?.capture_inputs !== false) as
+          Record<string, unknown> | undefined,
+        outputs: traceValue(event.outputs, redact, observability?.capture_outputs !== false) as
+          Record<string, unknown> | undefined,
+        error: traceValue(event.error, redact, true) as string | undefined,
+      })),
       started_at: new Date(startTime).toISOString(),
       completed_at: new Date().toISOString(),
     };
 
-    await this.sessionStore.saveTrace(executionTrace, workspaceId);
+    await this.sessionStore.saveTrace(
+      executionTrace,
+      workspaceId,
+      (observability?.trace_retention_days ?? 1) * 24 * 60 * 60,
+    );
 
     return {
       runId,

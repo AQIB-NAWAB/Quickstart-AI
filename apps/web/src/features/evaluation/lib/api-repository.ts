@@ -11,14 +11,9 @@ import type {
   ScoringMethod,
 } from "./types";
 
-export type ApiResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; status: number };
+export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
 
-async function apiFetch<T>(
-  url: string,
-  options: RequestInit = {},
-): Promise<ApiResult<T>> {
+async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<ApiResult<T>> {
   try {
     const res = await fetch(url, {
       ...options,
@@ -410,8 +405,7 @@ export const apiEvaluationRepository: EvaluationRepository = {
 
     const datasets = datasetsRes.ok ? datasetsRes.data.datasets : [];
     const runs = runsRes.ok ? runsRes.data.runs : [];
-    const selectedDataset =
-      (datasetId ? datasets.find((d) => d.id === datasetId) : null) ||
+    const selectedDataset = (datasetId ? datasets.find((d) => d.id === datasetId) : null) ||
       datasets[0] || {
         id: "default",
         workspaceId,
@@ -463,7 +457,10 @@ export const apiEvaluationRepository: EvaluationRepository = {
       EvaluationApiClient.listCases(workspaceId, datasetId, {}, signal),
     ]);
     if (!datasetRes.ok) {
-      return { status: datasetRes.status === 404 ? "not_found" : "error", message: datasetRes.error };
+      return {
+        status: datasetRes.status === 404 ? "not_found" : "error",
+        message: datasetRes.error,
+      };
     }
     return {
       status: "ready",
@@ -476,7 +473,7 @@ export const apiEvaluationRepository: EvaluationRepository = {
 
   async createDataset(workspaceId, data) {
     const res = await EvaluationApiClient.createDataset(workspaceId, {
-      agentId: "all",
+      agentId: data.agentId ?? "",
       name: data.name,
       description: data.description,
       tags: data.tags,

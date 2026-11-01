@@ -67,22 +67,17 @@ export function DatasetEditor({
   const [isSaving, setIsSaving] = useState(false);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const basePath = isPreview
-    ? "/preview/eval"
-    : `/workspaces/${workspaceId}/eval`;
+  const basePath = isPreview ? "/preview/eval" : `/workspaces/${workspaceId}/eval`;
 
   // Aggregate tags
-  const allTags = Array.from(
-    new Set(cases.flatMap((c) => c.tags || [])),
-  ).filter(Boolean);
+  const allTags = Array.from(new Set(cases.flatMap((c) => c.tags || []))).filter(Boolean);
 
   const filteredCases = cases.filter((c) => {
     const matchesSearch =
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.input.toLowerCase().includes(search.toLowerCase()) ||
       c.expectedOutput.toLowerCase().includes(search.toLowerCase());
-    const matchesTag =
-      selectedTag === "all" || (c.tags && c.tags.includes(selectedTag));
+    const matchesTag = selectedTag === "all" || (c.tags && c.tags.includes(selectedTag));
     return matchesSearch && matchesTag;
   });
 
@@ -136,20 +131,15 @@ export function DatasetEditor({
 
     try {
       if (editingCase) {
-        const res = await EvaluationApiClient.updateCase(
-          workspaceId,
-          dataset.id,
-          editingCase.id,
-          {
-            name: formName.trim() || editingCase.name,
-            input: formInput.trim(),
-            expectedOutput: formExpectedOutput.trim(),
-            expectedTools: formTools,
-            fixtureResponses: formFixtures,
-            tags: tagsArray,
-            expectedRecordVersion: editingCase.recordVersion,
-          },
-        );
+        const res = await EvaluationApiClient.updateCase(workspaceId, dataset.id, editingCase.id, {
+          name: formName.trim() || editingCase.name,
+          input: formInput.trim(),
+          expectedOutput: formExpectedOutput.trim(),
+          expectedTools: formTools,
+          fixtureResponses: formFixtures,
+          tags: tagsArray,
+          expectedRecordVersion: editingCase.recordVersion,
+        });
 
         if (!res.ok) {
           setModalError(res.error);
@@ -157,22 +147,16 @@ export function DatasetEditor({
           return;
         }
 
-        setCases((prev) =>
-          prev.map((c) => (c.id === editingCase.id ? res.data.case : c)),
-        );
+        setCases((prev) => prev.map((c) => (c.id === editingCase.id ? res.data.case : c)));
       } else {
-        const res = await EvaluationApiClient.createCase(
-          workspaceId,
-          dataset.id,
-          {
-            name: formName.trim() || `Case ${cases.length + 1}`,
-            input: formInput.trim(),
-            expectedOutput: formExpectedOutput.trim(),
-            expectedTools: formTools,
-            fixtureResponses: formFixtures,
-            tags: tagsArray,
-          },
-        );
+        const res = await EvaluationApiClient.createCase(workspaceId, dataset.id, {
+          name: formName.trim() || `Case ${cases.length + 1}`,
+          input: formInput.trim(),
+          expectedOutput: formExpectedOutput.trim(),
+          expectedTools: formTools,
+          fixtureResponses: formFixtures,
+          tags: tagsArray,
+        });
 
         if (!res.ok) {
           setModalError(res.error);
@@ -234,15 +218,14 @@ export function DatasetEditor({
 
           <div>
             <div className="flex items-center gap-2.5">
-              <h1 className="text-xl font-bold tracking-tight text-[#18181B]">
-                {dataset.name}
-              </h1>
+              <h1 className="text-xl font-bold tracking-tight text-[#18181B]">{dataset.name}</h1>
               <span className="rounded-full bg-[#F1F3F5] px-2.5 py-0.5 font-mono text-[11px] font-semibold text-[#18181B]">
                 rev {dataset.revision} · {dataset.caseCount} cases
               </span>
             </div>
             <p className="text-xs text-[#71717A] mt-0.5">
-              {dataset.description || "Manage test cases, expected outputs, and mock fixture responses."}
+              {dataset.description ||
+                "Manage test cases, expected outputs, and mock fixture responses."}
             </p>
           </div>
         </div>
@@ -357,9 +340,7 @@ export function DatasetEditor({
                       <span className="font-mono text-[11px] font-semibold text-[#71717A]">
                         #{index + 1}
                       </span>
-                      <span className="font-bold text-xs text-[#18181B] truncate">
-                        {c.name}
-                      </span>
+                      <span className="font-bold text-xs text-[#18181B] truncate">{c.name}</span>
                       {c.tags && c.tags.length > 0 && (
                         <div className="hidden sm:flex items-center gap-1">
                           {c.tags.slice(0, 2).map((t) => (
@@ -383,10 +364,7 @@ export function DatasetEditor({
                       </span>
                     )}
 
-                    <div
-                      className="flex items-center gap-1.5"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                       <button
                         type="button"
                         onClick={() => handleOpenEditModal(c)}
@@ -429,7 +407,9 @@ export function DatasetEditor({
                           <span>Expected Response</span>
                         </div>
                         <div className="rounded-lg bg-[#F8F9FB] p-2.5 text-xs text-[#18181B] leading-relaxed">
-                          {c.expectedOutput || <span className="text-[#A1A1AA]">No expected text constraint</span>}
+                          {c.expectedOutput || (
+                            <span className="text-[#A1A1AA]">No expected text constraint</span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -449,9 +429,7 @@ export function DatasetEditor({
                       {c.expectedTools && c.expectedTools.length > 0 ? (
                         <div className="space-y-2">
                           {c.expectedTools.map((t, tidx) => {
-                            const fixture = c.fixtureResponses?.find(
-                              (f) => f.toolName === t.name,
-                            );
+                            const fixture = c.fixtureResponses?.find((f) => f.toolName === t.name);
                             return (
                               <div
                                 key={tidx}
@@ -538,9 +516,7 @@ export function DatasetEditor({
 
             <form onSubmit={handleSaveCaseSubmit} className="space-y-3.5">
               <div className="space-y-1">
-                <label className="text-xs font-semibold text-[#18181B]">
-                  Case Name
-                </label>
+                <label className="text-xs font-semibold text-[#18181B]">Case Name</label>
                 <input
                   type="text"
                   value={formName}
@@ -617,7 +593,9 @@ export function DatasetEditor({
         onClose={() => setIsStartEvalOpen(false)}
         workspaceId={workspaceId}
         datasets={[dataset]}
+        defaultAgentId={dataset.agentId}
         defaultDatasetId={dataset.id}
+        isPreview={isPreview}
         onRunCreated={(run) => {
           router.push(`${basePath}/runs/${run.id}`);
         }}

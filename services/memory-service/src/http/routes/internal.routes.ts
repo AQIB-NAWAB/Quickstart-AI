@@ -10,5 +10,10 @@ export const createInternalRoutes: RouteModule<MemoryHttpContext> = (ctx) => {
     ctx.internalAuth,
     asyncHandler(ctrl.listFacts),
   );
+  router.post(
+    "/internal/workspaces/:workspaceId/memory/facts",
+    ctx.internalAuth,
+    asyncHandler(ctrl.createFact),
+  );
   return router;
 };

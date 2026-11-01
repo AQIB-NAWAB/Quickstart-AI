@@ -1,5 +1,9 @@
 import { WORKSPACE_PERMISSIONS } from "@quickstart/contracts";
-import { requestIdFromResponse, sendPlatformJson, type RequestHandler } from "@quickstart/http-server";
+import {
+  requestIdFromResponse,
+  sendPlatformJson,
+  type RequestHandler,
+} from "@quickstart/http-server";
 import type { SecretsService } from "../services/secrets.service.js";
 import { routeParam } from "../utils/route-param.js";
 
@@ -73,6 +77,14 @@ const INTERNAL_SERVICE_ACTOR_ID = "00000000-0000-0000-0000-000000000000";
 /** Internal controller — decrypts and returns plaintext to trusted callers, and handles internal service secret management */
 export function createInternalSecretsController(secrets: SecretsService) {
   return {
+    /** GET /internal/workspaces/:workspaceId/secrets — names only for trusted readiness checks */
+    list: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const workspaceId = routeParam(req.params.workspaceId);
+      const items = await secrets.listNames(workspaceId);
+      sendPlatformJson(res, 200, { request_id: requestId, secrets: items, total: items.length });
+    }) as RequestHandler,
+
     /** GET /internal/workspaces/:workspaceId/secrets/:name/value */
     reveal: (async (req, res) => {
       const requestId = requestIdFromResponse(res);

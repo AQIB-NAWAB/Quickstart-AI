@@ -1,18 +1,19 @@
 import { AppError, ErrorCode } from "@quickstart/errors";
-import type {
-  AudioChunk,
-  SynthesisResult,
-  SynthesisStreamMetrics,
-  TextToSpeech,
-} from "./types.js";
+import type { AudioChunk, SynthesisResult, SynthesisStreamMetrics, TextToSpeech } from "./types.js";
 
 export type OpenAiTtsOptions = {
   apiKey: string;
   baseUrl?: string;
   model?: string;
+  voice?: string;
+  instructions?: string;
+  speed?: number;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 };
+
+const CONVERSATIONAL_STYLE =
+  "Speak warmly and naturally, with clear pronunciation and a calm conversational pace. Use smooth phrasing and brief pauses at sentence boundaries. Avoid a robotic, exaggerated, or rushed delivery.";
 
 export class OpenAiTextToSpeech implements TextToSpeech {
   readonly id = "openai-tts";
@@ -26,14 +27,14 @@ export class OpenAiTextToSpeech implements TextToSpeech {
   async synthesize(text: string, voiceId: string, signal?: AbortSignal): Promise<SynthesisResult> {
     const started = Date.now();
     const baseUrl = (this.options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
-    const model = this.options.model ?? "gpt-4o-mini-tts";
-    const voice = voiceId?.trim() || "alloy";
+    const model = this.options.model ?? "gpt-4o-mini-tts-2025-12-15";
+    const voice = voiceId?.trim() || this.options.voice?.trim() || "marin";
+    const instructions =
+      this.options.instructions ??
+      (/^gpt-4o-mini-tts/.test(model) ? CONVERSATIONAL_STYLE : undefined);
 
     const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(),
-      this.options.timeoutMs ?? 30_000,
-    );
+    const timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 30_000);
     if (signal) {
       if (signal.aborted) controller.abort();
       else signal.addEventListener("abort", () => controller.abort(), { once: true });
@@ -51,6 +52,8 @@ export class OpenAiTextToSpeech implements TextToSpeech {
           model,
           input: text,
           voice,
+          ...(instructions ? { instructions } : {}),
+          ...(this.options.speed ? { speed: this.options.speed } : {}),
           response_format: "mp3",
         }),
         signal: controller.signal,
@@ -106,8 +109,11 @@ export class OpenAiTextToSpeech implements TextToSpeech {
   ): Promise<SynthesisStreamMetrics> {
     const started = Date.now();
     const baseUrl = (this.options.baseUrl ?? "https://api.openai.com/v1").replace(/\/$/, "");
-    const model = this.options.model ?? "gpt-4o-mini-tts";
-    const voice = voiceId?.trim() || "alloy";
+    const model = this.options.model ?? "gpt-4o-mini-tts-2025-12-15";
+    const voice = voiceId?.trim() || this.options.voice?.trim() || "marin";
+    const instructions =
+      this.options.instructions ??
+      (/^gpt-4o-mini-tts/.test(model) ? CONVERSATIONAL_STYLE : undefined);
 
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -116,6 +122,7 @@ export class OpenAiTextToSpeech implements TextToSpeech {
     const timer = setTimeout(() => controller.abort(), this.options.timeoutMs ?? 30_000);
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let firstChunkLatencyMs = 0;
+    let carry = Buffer.alloc(0);
 
     try {
       const res = await (this.options.fetchImpl ?? fetch)(`${baseUrl}/audio/speech`, {
@@ -128,7 +135,9 @@ export class OpenAiTextToSpeech implements TextToSpeech {
           model,
           input: text,
           voice,
-          response_format: "mp3",
+          ...(instructions ? { instructions } : {}),
+          ...(this.options.speed ? { speed: this.options.speed } : {}),
+          response_format: "pcm",
         }),
         signal: controller.signal,
       });
@@ -145,8 +154,24 @@ export class OpenAiTextToSpeech implements TextToSpeech {
         const { value, done } = await reader.read();
         if (done) break;
         if (!value || value.length === 0) continue;
+        // HTTP chunks can split a 16-bit sample. Emit only aligned PCM frames.
+        const bytes = carry.length ? Buffer.concat([carry, value]) : Buffer.from(value);
+        const alignedLength = bytes.length - (bytes.length % 2);
+        carry = Buffer.from(bytes.subarray(alignedLength));
+        if (!alignedLength) continue;
         if (!firstChunkLatencyMs) firstChunkLatencyMs = Math.max(1, Date.now() - started);
-        onAudio({ bytes: Buffer.from(value), encoding: "mp3", sampleRateHz: 24_000 });
+        onAudio({
+          bytes: bytes.subarray(0, alignedLength),
+          encoding: "pcm16",
+          sampleRateHz: 24_000,
+          mimeType: "audio/pcm",
+        });
+      }
+      if (carry.length) {
+        throw new AppError({
+          code: ErrorCode.UPSTREAM_UNAVAILABLE,
+          message: "OpenAI TTS returned an incomplete PCM sample",
+        });
       }
       if (!firstChunkLatencyMs) {
         throw new AppError({

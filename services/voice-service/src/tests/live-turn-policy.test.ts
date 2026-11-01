@@ -77,3 +77,27 @@ test("noise floor tracks quiet frames only and stays in range", () => {
   assert.ok(floor.value >= 0);
   assert.ok(floor.value <= 1);
 });
+
+test("spoken record identifiers and numbers are meaningful caller turns", () => {
+  for (const text of ["42", "۰۱۲۳", "123-456", "#100", "جی", "ہاں"]) {
+    assert.equal(isFillerOnly(text), false, text);
+  }
+  assert.equal(isFillerOnly("..."), true);
+});
+
+test("later speech chunks preserve phrases instead of splitting every three words", () => {
+  assert.equal(firstSpeakableCut("I can help ", false), 0);
+  assert.equal(
+    firstSpeakableCut("I can help you find your order and check its current status ", false),
+    60,
+  );
+  assert.equal(firstSpeakableCut("Your order is ready. Anything else?", false), 20);
+});
+
+test("speech boundaries preserve decimal values and recognize sentences ending in numbers", () => {
+  assert.equal(firstSpeakableCut("It costs 19.99 dollars. "), 23);
+  assert.equal(firstSpeakableCut("Order 42. What else?"), 9);
+  const urdu = "قیمت ۳.۵ روپے ہے۔";
+  assert.equal(urdu.slice(0, firstSpeakableCut(urdu)), urdu);
+  assert.equal(firstSpeakableCut("Use example.com for details"), 0);
+});

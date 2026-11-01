@@ -8,7 +8,7 @@ const SPOKEN_STYLE = [
   "Use the agent instructions and product facts below. Do not invent pricing, security claims, or product features that are not written there.",
   "If a detail is missing, say you are not sure and offer to have the QuickStart team follow up.",
   "Answer in one or two short spoken sentences as soon as the visitor finishes a thought.",
-  "If the visitor asks for a person, a human, or a teammate, say exactly: I'm switching you to a teammate now. Stop after that sentence.",
+  "If the visitor asks for a person, use consult_agent to follow the published agent's confirmation and handoff policy. Never announce a transfer before it is confirmed.",
   "No markdown, lists, URLs, or stage directions.",
 ].join(" ");
 
@@ -107,6 +107,7 @@ export async function loadWidgetVoiceBrief(input: {
   knowledgeUrl: string;
   internalToken: string;
   logger: Logger;
+  runtimeKnowledge?: boolean;
 }): Promise<WidgetVoicePack> {
   const requestId = randomUUID();
   try {
@@ -116,7 +117,8 @@ export async function loadWidgetVoiceBrief(input: {
       requestId,
     );
     const agentId = conversation?.conversation?.agent_id?.trim();
-    if (!agentId) return { brief: FALLBACK_BRIEF, ttsVoiceId: ENGLISH_DEMO_VOICE_ID, language: "en" };
+    if (!agentId)
+      return { brief: FALLBACK_BRIEF, ttsVoiceId: ENGLISH_DEMO_VOICE_ID, language: "en" };
 
     const profileKey = `agent:${input.workspaceId}:${agentId}`;
     let profile = cacheGet<AgentProfile>(profileKey);
@@ -153,6 +155,7 @@ export async function loadWidgetVoiceBrief(input: {
     const query = `${profile.name}. ${profile.instructions}`.slice(0, 500);
     const factsKey = knowledgeKey(input.workspaceId, query);
     let facts = cacheGet<string>(factsKey);
+    if (input.runtimeKnowledge) facts = "";
     if (facts === null) {
       facts = "";
       try {

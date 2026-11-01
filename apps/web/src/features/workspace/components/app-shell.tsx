@@ -34,7 +34,6 @@ import type { WorkspaceSummary } from "@/lib/server/workspace/workspaces";
 type Props = {
   workspaceId: string;
   workspaceName: string;
-  workspaceSlug: string;
   userEmail: string;
   workspaces: WorkspaceSummary[];
   organizations?: { id: string; name: string }[];
@@ -56,7 +55,6 @@ type NavSection = { label: string; items: NavItem[] };
 export function AppShell({
   workspaceId,
   workspaceName,
-  workspaceSlug,
   userEmail,
   workspaces,
   organizations,
@@ -137,7 +135,11 @@ export function AppShell({
       return activePath.includes("/eval/") || activePath.endsWith("/eval");
     const href = isPreview ? item.href.replace(/^\/preview/, base) : item.href;
     if (item.exact) return activePath === href;
-    if (item.name === "Agents" && (activePath.includes("/agents") || activePath.includes("/agents/"))) return true;
+    if (
+      item.name === "Agents" &&
+      (activePath.includes("/agents") || activePath.includes("/agents/"))
+    )
+      return true;
     if (item.name === "Campaigns" && activePath.includes("/campaigns")) return true;
     if (item.name === "Calls" && activePath.includes("/voice")) return true;
     if (item.name === "Leads" && activePath.includes("/leads")) return true;
@@ -186,7 +188,10 @@ export function AppShell({
           </div>
 
           {/* Grouped Destination Navigation */}
-          <nav aria-label="Workspace sections" className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+          <nav
+            aria-label="Workspace sections"
+            className="flex-1 overflow-y-auto px-3 py-4 space-y-5"
+          >
             {sections.map((section) => (
               <section key={section.label}>
                 <h2 className="px-3 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#8B98A5]">
@@ -267,13 +272,8 @@ export function AppShell({
                   aria-label="Switch workspace"
                   className="flex max-w-[240px] items-center gap-2 rounded-lg border border-[#DCE1E8] bg-white px-3 py-1.5 text-left hover:border-[#B6C0C9] hover:bg-[#F8F9FA] transition-colors"
                 >
-                  <span className="min-w-0">
-                    <span className="block truncate text-[13px] font-semibold text-[#202125]">
-                      {workspaceName}
-                    </span>
-                    <span className="block truncate text-[10px] font-mono text-[#667085]">
-                      {workspaceSlug}
-                    </span>
+                  <span className="min-w-0 truncate text-[13px] font-semibold text-[#202125]">
+                    {workspaceName}
                   </span>
                   <ChevronDown
                     className={`h-4 w-4 shrink-0 text-[#667085] transition-transform ${workspaceMenuOpen ? "rotate-180" : ""}`}
@@ -286,7 +286,10 @@ export function AppShell({
                     </div>
                     {workspaces.map((workspace) => {
                       const wsOrgId = workspace.orgId ?? workspace.org_id;
-                      const orgName = wsOrgId && organizations ? organizations.find((o) => o.id === wsOrgId)?.name : null;
+                      const orgName =
+                        wsOrgId && organizations
+                          ? organizations.find((o) => o.id === wsOrgId)?.name
+                          : null;
                       return (
                         <Link
                           key={workspace.id}

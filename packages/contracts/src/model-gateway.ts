@@ -31,6 +31,8 @@ export type ChatMessage = {
   name?: string;
   /** Present when role is `assistant` and model requests tools. */
   tool_calls?: ModelToolCall[];
+  /** Provider-native response items needed to preserve reasoning across tool calls. */
+  provider_items?: unknown[];
 };
 
 export type CompletionFinishReason = "stop" | "tool_calls";
@@ -44,13 +46,20 @@ export type ModelReference = {
 export type CompletionRequestBody = {
   workspace_id: string;
   request_id: string;
+  /** Optional runtime attribution for per-agent usage and observability. */
+  agent_id?: string;
+  conversation_id?: string;
+  channel?: "chat" | "voice" | "webhook";
   model: ModelReference;
   messages: ChatMessage[];
   tools?: ModelToolDefinition[];
   temperature?: number;
   max_tokens?: number;
-  response_format?: { type: "json_object" };
-  reasoning_effort?: "low" | "medium" | "high";
+response_format?: { type: "json_object" };
+  /** Reasoning effort for models that support it. */
+  reasoning_effort?: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /** Output verbosity for Responses-compatible models. */
+  verbosity?: "low" | "medium" | "high";
   fallback_model?: ModelReference;
   routing_mode?: ModelRoutingMode;
   credential_source?: ModelCredentialSource;
@@ -66,6 +75,8 @@ export type CompletionResponseBody = {
   content: string;
   finish_reason: CompletionFinishReason | string;
   tool_calls?: ModelToolCall[];
+  /** Opaque provider items to replay on the next tool loop turn. */
+  provider_items?: unknown[];
   usage: TokenUsage;
   provider: string;
   model: string;

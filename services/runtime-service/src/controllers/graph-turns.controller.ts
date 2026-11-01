@@ -142,13 +142,7 @@ export function createGraphTurnsController(graphTurnsService: GraphTurnsService)
 
     async listPreviewTraces(req: Request, res: Response): Promise<void> {
       const workspaceId = extractParam(req.params.workspaceId);
-      const sessionId = req.query.sessionId as string;
-      if (!sessionId) {
-        throw new AppError({
-          code: ErrorCode.VALIDATION_FAILED,
-          message: "sessionId query parameter is required",
-        });
-      }
+      const sessionId = (req.query.sessionId as string | undefined) || undefined;
       const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
       const traces = await graphTurnsService.listTraces(
         workspaceId,

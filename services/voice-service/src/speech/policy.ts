@@ -19,10 +19,7 @@ export type SpeechPolicyOptions = {
 
 function isRetryable(err: unknown): boolean {
   if (err instanceof AppError) {
-    return (
-      err.code === ErrorCode.UPSTREAM_TIMEOUT ||
-      err.code === ErrorCode.UPSTREAM_UNAVAILABLE
-    );
+    return err.code === ErrorCode.UPSTREAM_TIMEOUT || err.code === ErrorCode.UPSTREAM_UNAVAILABLE;
   }
   if (err instanceof Error && err.message === "CIRCUIT_OPEN") {
     return false;
@@ -68,7 +65,7 @@ export function withSpeechPolicy(
               message: "Speech STT circuit open",
             });
           }
-          if (billableCommitted || !isRetryable(err) || attempt === 2) {
+          if (signal?.aborted || billableCommitted || !isRetryable(err) || attempt === 2) {
             throw err;
           }
         }
@@ -108,7 +105,7 @@ export function withSpeechPolicy(
               message: "Speech TTS circuit open",
             });
           }
-          if (billableCommitted || !isRetryable(err) || attempt === 2) {
+          if (signal?.aborted || billableCommitted || !isRetryable(err) || attempt === 2) {
             throw err;
           }
         }
@@ -119,6 +116,46 @@ export function withSpeechPolicy(
       });
     },
   };
+
+  if (tts.streamSynthesize) {
+    wrappedTts.streamSynthesize = async (text, voiceId, onAudio, signal) => {
+      let committed = false;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        signal?.throwIfAborted();
+        try {
+          return await breaker.execute(() =>
+            tts.streamSynthesize!(
+              text,
+              voiceId,
+              (audio) => {
+                signal?.throwIfAborted();
+                if (!audio.bytes.length) return;
+                if (!committed) {
+                  committed = true;
+                  emit?.({
+                    type: "speech.usage",
+                    provider: tts.id,
+                    unit: "tts",
+                    units: 1,
+                    call_id: options.callId,
+                    workspace_id: options.workspaceId,
+                  });
+                }
+                onAudio(audio);
+              },
+              signal,
+            ),
+          );
+        } catch (err) {
+          if (signal?.aborted || committed || !isRetryable(err) || attempt === 2) throw err;
+        }
+      }
+      throw new AppError({
+        code: ErrorCode.UPSTREAM_UNAVAILABLE,
+        message: "Speech TTS stream failed",
+      });
+    };
+  }
 
   return { stt: wrappedStt, tts: wrappedTts };
 }

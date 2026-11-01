@@ -1,4 +1,4 @@
-import { AppError } from "@quickstart/errors";
+import { AppError, ErrorCode } from "@quickstart/errors";
 import type { Logger } from "@quickstart/logging";
 import { requestIdFromResponse, sendPlatformJson, type RequestHandler } from "@quickstart/http-server";
 import type { CapLease, CallCaps } from "../caps/call-caps.js";
@@ -13,6 +13,8 @@ import {
 } from "../telephony/livekit/sip-provisioner.js";
 import type { TelnyxNumbersClient } from "../telephony/telnyx/types.js";
 import type { InboundCallBridge } from "../livekit/types.js";
+import type { TelephonyRouter } from "../telephony/router.js";
+import type { WidgetVoiceLiveSessionManager } from "../widget-voice/session-manager.js";
 
 const SIP_PARTICIPANT_KIND = 3;
 const TERMINAL_CALL_STATES = new Set(["completed", "failed", "busy", "no_answer", "canceled"]);
@@ -40,6 +42,8 @@ export type InboundCallsDeps = {
   conversations: ConversationClient;
   statusIdempotency: StatusIdempotencyStore;
   bridge?: InboundCallBridge | null;
+  telephony?: TelephonyRouter;
+  widgetSessions?: WidgetVoiceLiveSessionManager | null;
   usageIngest?: UsageIngestClient;
   logger: Logger;
 };
@@ -225,6 +229,59 @@ export function createInboundCallsController(deps: InboundCallsDeps) {
   }
 
   return {
+    staffStopCall: (async (req, res) => {
+      const requestId = requestIdFromResponse(res);
+      const workspaceId = String(req.params.workspaceId ?? "");
+      const callId = String(req.params.callId ?? "");
+      const call = await deps.calls.get(workspaceId, callId);
+      if (!call || call.direction !== "inbound") {
+        throw new AppError({
+          code: ErrorCode.NOT_FOUND,
+          message: "Call not found",
+          requestId,
+        });
+      }
+      if (TERMINAL_CALL_STATES.has(call.state)) {
+        sendPlatformJson(res, 200, { request_id: requestId, stopped: true, already_ended: true });
+        return;
+      }
+
+      if (call.livekit_room_name) {
+        await deps.provisioner.endRoom(call.livekit_room_name);
+        await finishCall(call.livekit_room_name);
+      } else if (call.telephony_provider === "widget") {
+        if (deps.widgetSessions) {
+          await deps.widgetSessions.stopCall(workspaceId, callId);
+        } else {
+          const endedAt = new Date();
+          await deps.calls.updateState(workspaceId, callId, {
+            state: "completed",
+            endedAt,
+            durationSeconds: Math.max(1, Math.floor((endedAt.getTime() - call.started_at.getTime()) / 1000)),
+          });
+        }
+      } else {
+        if (call.provider_call_sid) {
+          const provider = deps.telephony?.list().find((item) => item.id === call.telephony_provider);
+          if (!provider) {
+            throw new AppError({
+              code: ErrorCode.UPSTREAM_UNAVAILABLE,
+              message: "The call provider is unavailable, so the call could not be stopped",
+              requestId,
+            });
+          }
+          await provider.hangup(call.provider_call_sid);
+        }
+        const endedAt = new Date();
+        await deps.calls.updateState(workspaceId, callId, {
+          state: "completed",
+          endedAt,
+          durationSeconds: Math.max(1, Math.floor((endedAt.getTime() - call.started_at.getTime()) / 1000)),
+        });
+      }
+      sendPlatformJson(res, 200, { request_id: requestId, stopped: true });
+    }) as RequestHandler,
+
     /** Telnyx number-order / call event webhook. */
     telnyxWebhook: (async (req, res) => {
       const rawBody = rawBodyOf(req);

@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { TenantContext } from "@quickstart/auth";
-import { DEFAULT_AGENT_VOICE_SETTINGS } from "@quickstart/contracts";
+import {
+  DEFAULT_AGENT_CONFIGURATION,
+  DEFAULT_AGENT_VOICE_SETTINGS,
+  normalizeAgentConfiguration,
+} from "@quickstart/contracts";
 import { AppError, ErrorCode } from "@quickstart/errors";
 import type { Agent, AgentVersion } from "../domain/types.js";
 import { snapshotFromAgent } from "../domain/types.js";
@@ -35,8 +39,14 @@ export class MemoryAgentStore implements AgentStore {
       channels: input.channels ?? defaultChannels,
       tools: input.tools ?? [],
       voice: input.voice ?? { ...DEFAULT_AGENT_VOICE_SETTINGS },
+      configuration: input.configuration ?? { ...DEFAULT_AGENT_CONFIGURATION },
       version: 1,
       productionVersionId: null,
+      scheduledVersionId: null,
+      scheduledPublishAt: null,
+      canaryVersionId: null,
+      canaryPercentage: 0,
+      archivedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -44,10 +54,26 @@ export class MemoryAgentStore implements AgentStore {
     return agent;
   }
 
-  async listAgents(tenant: TenantContext): Promise<Agent[]> {
-    return [...this.agents.values()]
+  async listAgents(
+    tenant: TenantContext,
+    options: { includeArchived?: boolean; limit?: number; cursor?: string } = {},
+  ): Promise<{ items: Agent[]; nextCursor: string | null }> {
+    const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
+    const offset = options.cursor
+      ? Number(Buffer.from(options.cursor, "base64url").toString("utf8")) || 0
+      : 0;
+    const items = [...this.agents.values()]
       .filter((a) => a.workspaceId === tenant.workspaceId)
+      .filter((a) => options.includeArchived || !a.archivedAt)
       .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+    const page = items.slice(offset, offset + limit);
+    return {
+      items: page,
+      nextCursor:
+        offset + limit < items.length
+          ? Buffer.from(String(offset + limit)).toString("base64url")
+          : null,
+    };
   }
 
   async getAgent(tenant: TenantContext, agentId: string): Promise<Agent | null> {
@@ -58,7 +84,11 @@ export class MemoryAgentStore implements AgentStore {
     return agent;
   }
 
-  async updateAgent(tenant: TenantContext, agentId: string, input: UpdateAgentInput): Promise<Agent> {
+  async updateAgent(
+    tenant: TenantContext,
+    agentId: string,
+    input: UpdateAgentInput,
+  ): Promise<Agent> {
     const agent = this.agents.get(agentId);
     if (!agent || agent.workspaceId !== tenant.workspaceId) {
       throw new AppError({
@@ -95,10 +125,11 @@ export class MemoryAgentStore implements AgentStore {
     if (input.channels !== undefined) agent.channels = input.channels;
     if (input.tools !== undefined) agent.tools = input.tools;
     if (input.voice !== undefined) agent.voice = input.voice;
+    if (input.configuration !== undefined)
+      agent.configuration = normalizeAgentConfiguration(input.configuration);
     if (input.builderMode !== undefined) agent.builderMode = input.builderMode;
     if (input.draftGraph !== undefined) agent.draftGraph = input.draftGraph;
-    if (input.graphSchemaVersion !== undefined)
-      agent.graphSchemaVersion = input.graphSchemaVersion;
+    if (input.graphSchemaVersion !== undefined) agent.graphSchemaVersion = input.graphSchemaVersion;
     agent.version += 1;
     agent.updatedAt = new Date();
     return agent;
@@ -150,11 +181,93 @@ export class MemoryAgentStore implements AgentStore {
     return true;
   }
 
+  async archiveAgent(tenant: TenantContext, agentId: string, archived: boolean): Promise<Agent> {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.workspaceId !== tenant.workspaceId)
+      throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent not found" });
+    if (
+      archived &&
+      (agent.productionVersionId || agent.canaryVersionId || agent.scheduledVersionId)
+    )
+      throw new AppError({
+        code: ErrorCode.VALIDATION_FAILED,
+        message: "Unpublish the live release before archiving this agent",
+      });
+    agent.archivedAt = archived ? new Date() : null;
+    agent.updatedAt = new Date();
+    return agent;
+  }
+
+  async setCanary(
+    tenant: TenantContext,
+    agentId: string,
+    versionId: string | null,
+    percentage: number,
+  ): Promise<Agent> {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.workspaceId !== tenant.workspaceId)
+      throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent not found" });
+    if (versionId) {
+      const version = this.versions.get(versionId);
+      if (!version || version.agentId !== agentId || version.workspaceId !== tenant.workspaceId)
+        throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent version not found" });
+    }
+    agent.canaryVersionId = versionId;
+    agent.canaryPercentage = versionId ? percentage : 0;
+    agent.updatedAt = new Date();
+    return agent;
+  }
+
+  async scheduleRelease(
+    tenant: TenantContext,
+    agentId: string,
+    versionId: string,
+    publishAt: Date,
+  ) {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.workspaceId !== tenant.workspaceId)
+      throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent not found" });
+    const version = this.versions.get(versionId);
+    if (!version || version.agentId !== agentId || version.workspaceId !== tenant.workspaceId)
+      throw new AppError({ code: ErrorCode.NOT_FOUND, message: "Agent version not found" });
+    if (publishAt.getTime() <= Date.now()) {
+      agent.productionVersionId = versionId;
+      agent.scheduledVersionId = null;
+      agent.scheduledPublishAt = null;
+    } else {
+      agent.scheduledVersionId = versionId;
+      agent.scheduledPublishAt = new Date(publishAt);
+    }
+    agent.updatedAt = new Date();
+    return agent;
+  }
+
+  async applyDueSchedules(now = new Date()) {
+    let applied = 0;
+    for (const agent of this.agents.values()) {
+      if (!agent.scheduledVersionId || !agent.scheduledPublishAt || agent.scheduledPublishAt > now)
+        continue;
+      const version = this.versions.get(agent.scheduledVersionId);
+      if (!version || version.agentId !== agent.id) continue;
+      agent.productionVersionId = agent.scheduledVersionId;
+      agent.scheduledVersionId = null;
+      agent.scheduledPublishAt = null;
+      agent.updatedAt = new Date();
+      applied += 1;
+    }
+    return applied;
+  }
+
   async publish(
     tenant: TenantContext,
     agentId: string,
     baseVersion: number,
-    audit?: { requestId?: string; releaseNotes?: string },
+    audit?: {
+      requestId?: string;
+      releaseNotes?: string;
+      approval?: { approved: boolean; note?: string };
+      completedChecklist?: string[];
+    },
   ) {
     const agent = this.agents.get(agentId);
     if (!agent || agent.workspaceId !== tenant.workspaceId) {
@@ -184,6 +297,8 @@ export class MemoryAgentStore implements AgentStore {
     };
     this.versions.set(version.id, version);
     agent.productionVersionId = version.id;
+    agent.scheduledVersionId = null;
+    agent.scheduledPublishAt = null;
     agent.updatedAt = new Date();
 
     return { version, agent: { ...agent } };
@@ -205,6 +320,10 @@ export class MemoryAgentStore implements AgentStore {
       });
     }
     agent.productionVersionId = versionId;
+    agent.scheduledVersionId = null;
+    agent.scheduledPublishAt = null;
+    agent.canaryVersionId = null;
+    agent.canaryPercentage = 0;
     agent.updatedAt = new Date();
     return { version, agent: { ...agent } };
   }

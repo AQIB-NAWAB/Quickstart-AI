@@ -32,11 +32,26 @@ export class AgentEntity {
   @Column({ type: "jsonb", default: {} })
   voice!: import("@quickstart/contracts").AgentVoiceSettings;
 
+  @Column({ type: "jsonb", default: {} })
+  configuration!: import("@quickstart/contracts").AgentConfiguration;
+
   @Column({ type: "int", default: 1 })
   version!: number;
 
   @Column({ name: "production_version_id", type: "uuid", nullable: true })
   productionVersionId!: string | null;
+
+  @Column({ name: "scheduled_version_id", type: "uuid", nullable: true })
+  scheduledVersionId!: string | null;
+
+  @Column({ name: "scheduled_publish_at", type: "timestamptz", nullable: true })
+  scheduledPublishAt!: Date | null;
+
+  @Column({ name: "canary_version_id", type: "uuid", nullable: true })
+  canaryVersionId!: string | null;
+
+  @Column({ name: "canary_percentage", type: "int", default: 0 })
+  canaryPercentage!: number;
 
   @Column({ name: "builder_mode", type: "varchar", length: 32, default: "legacy" })
   builderMode!: "legacy" | "canvas";
@@ -47,9 +62,11 @@ export class AgentEntity {
   @Column({ name: "graph_schema_version", type: "int", default: 1 })
   graphSchemaVersion!: number;
 
+  @Column({ name: "archived_at", type: "timestamptz", nullable: true })
+  archivedAt!: Date | null;
+
   @CreateDateColumn({ name: "created_at", type: "timestamptz" })
   createdAt!: Date;
-
 
   @UpdateDateColumn({ name: "updated_at", type: "timestamptz" })
   updatedAt!: Date;
