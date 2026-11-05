@@ -56,8 +56,8 @@ const FOOTER_NAV_GROUPS: FooterNavGroup[] = [
     links: [
       { label: "How it works", href: "#how-it-works" },
       { label: "FAQ", href: "#faq" },
-      { label: "Log in", href: "/login" },
-      { label: "Start building", href: "/register", hasArrow: true },
+      { label: "Log in", href: "/request-access" },
+      { label: "Request access", href: "/request-access", hasArrow: true },
     ],
   },
 ];
