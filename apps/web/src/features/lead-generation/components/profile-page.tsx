@@ -5,16 +5,18 @@ import {
   AlertTriangle,
   ArrowLeft,
   Building2,
-  CheckCircle2,
+  Check,
   Globe,
   MapPin,
   Save,
+  ShieldCheck,
   Target,
+  UserCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChipInput } from "@/components/ui/chip-input";
-import { getProfile, putProfile } from "../lib/client";
+import { confirmProfileFacts, getProfile, putProfile } from "../lib/client";
 import type { BusinessInput, LeadGenerationProfile } from "../lib/types";
 
 const emptyBusiness = (): BusinessInput => ({
@@ -24,6 +26,13 @@ const emptyBusiness = (): BusinessInput => ({
   offerings: [],
   target_categories: [],
   locations: [],
+  products_or_services: [],
+  selling_points: [],
+  ideal_customer_profile: "",
+  preferred_roles: [],
+  exclusions: [],
+  target_countries: [],
+  target_industries: [],
 });
 
 export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string }) {
@@ -31,8 +40,11 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
   const [business, setBusiness] = useState<BusinessInput>(emptyBusiness());
   const [error, setError] = useState<string | null>(null);
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [confirmSuccess, setConfirmSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [section, setSection] = useState<"business" | "targets" | "sources">("business");
 
   // Track if user has made edits so polling does NOT overwrite dirty inputs
   const isDirtyRef = useRef(false);
@@ -56,14 +68,24 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
 
         // Only update input form values if not dirty or on initial load
         if (isInitial || !isDirtyRef.current) {
-          const supplied = (p?.supplied as BusinessInput | undefined) ?? emptyBusiness();
+          const confirmed = p?.confirmed_facts as { confirmed_facts?: BusinessInput } | undefined;
+          const supplied = (confirmed?.confirmed_facts || p?.supplied) as BusinessInput | undefined;
+          const base = supplied ?? emptyBusiness();
+
           setBusiness({
-            name: supplied.name || "",
-            website: supplied.website || "https://",
-            description: supplied.description || "",
-            offerings: supplied.offerings ?? [],
-            target_categories: supplied.target_categories ?? [],
-            locations: supplied.locations ?? [],
+            name: base.name || "",
+            website: base.website || "https://",
+            description: base.description || "",
+            offerings: base.offerings ?? [],
+            target_categories: base.target_categories ?? [],
+            locations: base.locations ?? [],
+            products_or_services: base.products_or_services ?? [],
+            selling_points: base.selling_points ?? [],
+            ideal_customer_profile: base.ideal_customer_profile || "",
+            preferred_roles: base.preferred_roles ?? [],
+            exclusions: base.exclusions ?? [],
+            target_countries: base.target_countries ?? [],
+            target_industries: base.target_industries ?? [],
           });
           if (isInitial) isDirtyRef.current = false;
         }
@@ -72,7 +94,7 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
         isFetchingRef.current = false;
       }
     },
-    [workspaceId]
+    [workspaceId],
   );
 
   useEffect(() => {
@@ -95,33 +117,47 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
 
   function updateField<K extends keyof BusinessInput>(field: K, value: BusinessInput[K]) {
     isDirtyRef.current = true;
+    setSavedSuccess(false);
+    setConfirmSuccess(false);
     setBusiness((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function validateBusiness() {
+    let message = "";
+    let target: "business" | "targets" = "business";
+    if (!business.name.trim()) message = "Company name is required.";
+    else if (!business.description.trim()) message = "Company description is required.";
+    else if (!business.target_categories.some((value) => value.trim())) {
+      message = "At least one target category is required.";
+      target = "targets";
+    } else if (!business.locations.some((value) => value.trim())) {
+      message = "At least one location is required.";
+      target = "targets";
+    }
+    const website = business.website?.trim();
+    if (!message && website && website !== "https://") {
+      try {
+        const url = new URL(website);
+        if (!["https:", "http:"].includes(url.protocol) || !url.hostname.includes("."))
+          throw new Error();
+      } catch {
+        message = "Enter a valid website URL, including https://, or leave it blank.";
+      }
+    }
+    if (message) {
+      setError(message);
+      setSection(target);
+      return false;
+    }
+    return true;
   }
 
   async function onSave(e: React.FormEvent) {
     e.preventDefault();
-    if (saving) return;
+    if (saving || confirming) return;
 
-    if (!business.name.trim()) {
-      setError("Company name is required.");
-      return;
-    }
-    if (!business.website.trim() || business.website.trim() === "https://") {
-      setError("Company website is required.");
-      return;
-    }
-    if (!business.description.trim()) {
-      setError("Company description is required.");
-      return;
-    }
-    if (business.target_categories.length === 0) {
-      setError("At least one target category is required.");
-      return;
-    }
-    if (business.locations.length === 0) {
-      setError("At least one location is required.");
-      return;
-    }
+    if (!validateBusiness()) return;
+    const websiteClean = business.website?.trim() || "";
 
     setSaving(true);
     setError(null);
@@ -132,11 +168,20 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
       business: {
         ...business,
         name: business.name.trim(),
-        website: business.website.trim(),
+        ...(websiteClean && websiteClean !== "https://" ? { website: websiteClean } : {}),
         description: business.description.trim(),
         offerings: business.offerings.map((s) => s.trim()).filter(Boolean),
         target_categories: business.target_categories.map((s) => s.trim()).filter(Boolean),
         locations: business.locations.map((s) => s.trim()).filter(Boolean),
+        products_or_services: (business.products_or_services ?? [])
+          .map((s) => s.trim())
+          .filter(Boolean),
+        selling_points: (business.selling_points ?? []).map((s) => s.trim()).filter(Boolean),
+        ideal_customer_profile: (business.ideal_customer_profile ?? "").trim(),
+        preferred_roles: (business.preferred_roles ?? []).map((s) => s.trim()).filter(Boolean),
+        exclusions: (business.exclusions ?? []).map((s) => s.trim()).filter(Boolean),
+        target_countries: (business.target_countries ?? []).map((s) => s.trim()).filter(Boolean),
+        target_industries: (business.target_industries ?? []).map((s) => s.trim()).filter(Boolean),
       },
     };
 
@@ -155,6 +200,29 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
     await load(false);
   }
 
+  async function handleConfirmFacts() {
+    if (saving || confirming || !validateBusiness()) return;
+    setConfirming(true);
+    setError(null);
+    try {
+      const res = await confirmProfileFacts(workspaceId, {
+        approved: true,
+        confirmed_facts: { ...business },
+        notes: "Approved by workspace user via portal",
+      });
+      if (res.data) {
+        setProfile(res.data.profile);
+        isDirtyRef.current = false;
+        setConfirmSuccess(true);
+        setTimeout(() => setConfirmSuccess(false), 4000);
+      } else {
+        setError(res.error?.message || "Failed to confirm facts");
+      }
+    } finally {
+      setConfirming(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="space-y-4 max-w-5xl">
@@ -165,92 +233,143 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
   }
 
   const isResearchFailed = profile?.research_status === "failed";
+  const isResearchReady = profile?.research_status === "ready";
   const hasSavedDetails = Boolean(profile?.supplied && (profile.supplied as BusinessInput).name);
+  const isFactsConfirmed =
+    !isDirtyRef.current &&
+    Boolean(
+      profile?.confirmed_facts && (profile.confirmed_facts as { approved?: boolean }).approved,
+    );
+  const hasResearchedFacts = Boolean(
+    profile?.researched && Object.keys(profile.researched).length > 0,
+  );
 
   return (
-    <div className="lead-console lead-profile space-y-8">
-      {/* 1. Header matching 8.png */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <h1 className="text-3xl font-bold text-neutral-900 tracking-tight">Business profile</h1>
-
-        <Link
-          href={`/workspaces/${workspaceId}/lead-generation/runs`}
-          className="inline-flex items-center gap-2 px-3.5 py-2 rounded-8 text-xs font-semibold border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-800 shadow-xs transition-colors self-start sm:self-auto shrink-0"
+    <div className="lead-console lead-profile-redesign settings-page">
+      <header className="settings-heading">
+        <div className="settings-title">
+          <Link
+            className="settings-back"
+            href={`/workspaces/${workspaceId}/lead-generation/runs`}
+            title="Back to runs"
+            aria-label="Back to runs"
+          >
+            <ArrowLeft size={18} />
+          </Link>
+          <div>
+            <h1>Business profile</h1>
+            <p>Your business, ideal customers and research defaults.</p>
+          </div>
+        </div>
+        <button
+          className="settings-button primary"
+          type="submit"
+          form="business-profile"
+          disabled={saving || confirming}
         >
-          <ArrowLeft className="w-3.5 h-3.5 text-neutral-600" />
-          <span>Back to runs</span>
-        </Link>
-      </div>
-
-      {/* 2. Research Notice Banner matching 8.png */}
+          <Save size={16} />
+          {saving ? "Saving…" : "Save profile"}
+        </button>
+      </header>
+      {!isFactsConfirmed && (hasResearchedFacts || isResearchReady) && (
+        <div className="settings-notice">
+          <div>
+            <strong>Website findings need review</strong>
+            <p>Review proposed findings before approving them for future runs.</p>
+          </div>
+          <button type="button" className="settings-button" onClick={() => setSection("sources")}>
+            Review findings
+          </button>
+        </div>
+      )}
+      {isResearching && (
+        <p role="status" className="settings-message">
+          Website research is in progress. You can keep editing your profile.
+        </p>
+      )}
       {isResearchFailed && (
-        <div className="flex items-start gap-3 p-4 rounded-8 border border-amber-200 bg-amber-50/80 text-amber-900">
-          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="space-y-0.5 text-xs">
-            <p className="font-bold text-amber-950">Website research failed</p>
-            {hasSavedDetails && (
-              <p className="text-amber-800">Your saved business details are still available.</p>
-            )}
-          </div>
-        </div>
+        <p role="status" className="settings-message">
+          <AlertTriangle size={18} />
+          Website research failed.
+          {hasSavedDetails
+            ? " Your saved details are still available."
+            : " You can enter business details manually."}
+        </p>
       )}
-
-      {savedSuccess && (
-        <div className="flex items-center gap-2 rounded-8 border border-emerald-200 bg-emerald-50 px-3.5 py-2 text-xs text-emerald-800">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Profile saved successfully.</span>
-        </div>
+      {(savedSuccess || confirmSuccess) && (
+        <p role="status" className="settings-message success">
+          <Check size={17} />
+          {confirmSuccess ? "Business facts approved." : "Profile saved."}
+        </p>
       )}
-
       {error && (
-        <div className="flex items-center gap-2 rounded-8 border border-red-200 bg-red-50 px-3.5 py-2 text-xs text-red-800">
-          <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
-          <span>{error}</span>
-        </div>
+        <p role="alert" className="settings-message error">
+          <AlertCircle size={18} />
+          {error}
+        </p>
       )}
-
-      {/* 3. Form Layout: Unframed settings sections matching 8.png */}
-      <form onSubmit={onSave} className="space-y-8">
-        {/* SECTION 1: YOUR BUSINESS */}
-        <div className="flex flex-col md:flex-row gap-6 pt-2">
-          {/* Left Column: Label ~240-280px */}
-          <div className="w-full md:w-[260px] shrink-0 space-y-1">
-            <div className="flex items-center gap-2 text-neutral-900 font-bold text-base">
-              <Building2 className="w-5 h-5 text-neutral-700" />
-              <span>Your business</span>
+      <form id="business-profile" noValidate onSubmit={onSave} className="settings-workspace">
+        <nav className="settings-rail" aria-label="Profile sections">
+          {(
+            [
+              { id: "business", label: "Your business", icon: Building2 },
+              { id: "targets", label: "Target prospects", icon: Target },
+              { id: "sources", label: "Sources & approval", icon: ShieldCheck },
+            ] as const
+          ).map(({ id, label, icon: Icon }) => (
+            <button
+              type="button"
+              key={id}
+              aria-current={section === id ? "page" : undefined}
+              onClick={() => setSection(id)}
+            >
+              <Icon size={18} />
+              {label}
+            </button>
+          ))}
+          <p>Set up once. Reuse across research runs.</p>
+        </nav>
+        <div className="settings-content">
+          <section
+            hidden={section !== "business"}
+            aria-label="Your business"
+            className="settings-section space-y-6"
+          >
+            <div>
+              <h2>Your business</h2>
+              <p>Tell us what you offer and what makes it useful.</p>
             </div>
-            <p className="text-xs text-neutral-500 font-normal">
-              Company details and offerings.
-            </p>
-          </div>
-
-          {/* Right Column: Form Fields */}
-          <div className="min-w-0 flex-1 space-y-6 lead-profile-fields">
-            {/* Paired Company Name + Website */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-neutral-800">
+                <label
+                  htmlFor="profile-company-name"
+                  className="block text-xs font-semibold text-neutral-800"
+                >
                   Company name <span className="text-heat-100">*</span>
                 </label>
                 <input
+                  id="profile-company-name"
                   type="text"
                   required
                   value={business.name}
                   onChange={(e) => updateField("name", e.target.value)}
-                  placeholder="e.g. Acme Corp"
+                  placeholder="e.g. Acme Innovations"
                   className="w-full h-11 px-3.5 border border-neutral-300 rounded-8 bg-white text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-heat-100 focus:ring-1 focus:ring-heat-100 transition-colors"
                 />
               </div>
 
               <div className="space-y-1.5">
-                <label className="block text-xs font-semibold text-neutral-800">
-                  Website <span className="text-heat-100">*</span>
+                <label
+                  htmlFor="profile-website"
+                  className="block text-xs font-semibold text-neutral-800"
+                >
+                  Website <span className="settings-optional">Optional</span>
                 </label>
                 <div className="relative">
                   <Globe className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
                   <input
+                    id="profile-website"
                     type="url"
-                    required
                     value={business.website}
                     onChange={(e) => updateField("website", e.target.value)}
                     placeholder="https://example.com"
@@ -260,14 +379,17 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
               </div>
             </div>
 
-            {/* Description */}
             <div className="space-y-1.5">
-              <label className="block text-xs font-semibold text-neutral-800">
+              <label
+                htmlFor="profile-description"
+                className="block text-xs font-semibold text-neutral-800"
+              >
                 Description <span className="text-heat-100">*</span>
               </label>
               <textarea
                 required
-                rows={4}
+                id="profile-description"
+                rows={3}
                 value={business.description}
                 onChange={(e) => updateField("description", e.target.value)}
                 placeholder="What does your company do and what value do you provide?"
@@ -275,7 +397,6 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
               />
             </div>
 
-            {/* Core offerings ChipInput */}
             <div className="space-y-1.5">
               <ChipInput
                 label="Core offerings"
@@ -285,68 +406,170 @@ export function LeadGenerationProfilePage({ workspaceId }: { workspaceId: string
                 helperText="Add an offering and press Enter."
               />
             </div>
-          </div>
-        </div>
 
-        <div className="border-t border-neutral-200" />
-
-        {/* SECTION 2: TARGET CUSTOMERS */}
-        <div className="flex flex-col md:flex-row gap-6">
-          {/* Left Column: Label ~240-280px */}
-          <div className="w-full md:w-[260px] shrink-0 space-y-1">
-            <div className="flex items-center gap-2 text-neutral-900 font-bold text-base">
-              <Target className="w-5 h-5 text-neutral-700" />
-              <span>Target customers</span>
-            </div>
-            <p className="text-xs text-neutral-500 font-normal">
-              Categories and locations.
-            </p>
-          </div>
-
-          {/* Right Column: Form Fields */}
-          <div className="min-w-0 flex-1 space-y-6 lead-profile-fields">
-            {/* Target categories */}
-            <div className="space-y-1.5">
-              <ChipInput
-                label="Target categories"
-                required
-                values={business.target_categories}
-                onChange={(vals) => updateField("target_categories", vals)}
-                placeholder="Add category..."
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <ChipInput
+                  label="Products / Services"
+                  values={business.products_or_services ?? []}
+                  onChange={(vals) => updateField("products_or_services", vals)}
+                  placeholder="Add a product or service…"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <ChipInput
+                  label="Key Selling Points"
+                  values={business.selling_points ?? []}
+                  onChange={(vals) => updateField("selling_points", vals)}
+                  placeholder="Add a selling point…"
+                />
+              </div>
             </div>
 
-            {/* Locations */}
-            <div className="space-y-1.5">
-              <ChipInput
-                label="Locations"
-                required
-                icon={MapPin}
-                values={business.locations}
-                onChange={(vals) => updateField("locations", vals)}
-                placeholder="Add location..."
-              />
+            <div className="settings-summary">
+              <div className="settings-section-heading">
+                <h3>Targeting defaults</h3>
+                <button type="button" onClick={() => setSection("targets")}>
+                  Edit targeting →
+                </button>
+              </div>
+              <p>{business.target_categories.join(" · ") || "No categories added"}</p>
+              <p>
+                <MapPin size={15} />
+                {business.locations.join(" · ") || "No locations added"}
+              </p>
             </div>
-          </div>
-        </div>
-
-        <div className="border-t border-neutral-200" />
-
-        {/* 4. Footer Actions matching 8.png */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2">
-          <p className="text-xs text-neutral-500 font-normal">
-            Changes apply to future research runs.
-          </p>
-
-          <button
-            type="submit"
-            disabled={saving}
-            className="h-11 px-6 rounded-8 bg-heat-100 hover:bg-orange-600 text-xs font-semibold text-white inline-flex items-center gap-2 shadow-xs transition-colors disabled:opacity-50 self-end sm:self-auto"
+          </section>
+          <section
+            hidden={section !== "targets"}
+            aria-label="Target prospects"
+            className="settings-section space-y-6"
           >
-            <Save className="w-4 h-4" />
-            <span>{saving ? "Saving…" : "Save profile"}</span>
-          </button>
+            <div>
+              <h2>Target prospects</h2>
+              <p>Define the customers you want to reach.</p>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="profile-icp" className="block text-xs font-semibold text-neutral-800">
+                Ideal Customer Profile (ICP)
+              </label>
+              <textarea
+                id="profile-icp"
+                rows={2}
+                value={business.ideal_customer_profile ?? ""}
+                onChange={(e) => updateField("ideal_customer_profile", e.target.value)}
+                placeholder="Describe your ideal company characteristics, buying signals, or business needs..."
+                className="w-full p-3.5 border border-neutral-300 rounded-8 bg-white text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-heat-100 focus:ring-1 focus:ring-heat-100 transition-colors"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <ChipInput
+                  label="Target categories / industries"
+                  required
+                  values={business.target_categories}
+                  onChange={(vals) => updateField("target_categories", vals)}
+                  placeholder="Add category..."
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <ChipInput
+                  label="Locations / Countries"
+                  required
+                  icon={MapPin}
+                  values={business.locations}
+                  onChange={(vals) => updateField("locations", vals)}
+                  placeholder="Add location..."
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-1.5">
+                <ChipInput
+                  label="Preferred Decision-Maker Roles"
+                  icon={UserCheck}
+                  values={business.preferred_roles ?? []}
+                  onChange={(vals) => updateField("preferred_roles", vals)}
+                  placeholder="e.g. VP Sales, Founder, CTO..."
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <ChipInput
+                  label="Exclusions & Competitors"
+                  values={business.exclusions ?? []}
+                  onChange={(vals) => updateField("exclusions", vals)}
+                  placeholder="e.g. competitor.com, agencies..."
+                />
+              </div>
+            </div>
+          </section>
+          <section
+            hidden={section !== "sources"}
+            aria-label="Sources and approval"
+            className="settings-section space-y-6"
+          >
+            <div>
+              <h2>Sources & approval</h2>
+              <p>Keep supplied details separate from proposed research findings.</p>
+            </div>
+            <div className="settings-source">
+              <Building2 size={20} />
+              <div>
+                <h3>Supplied details</h3>
+                <p>{profile?.supplied?.name || "No saved business details yet"}</p>
+                <p>Business information supplied by your team.</p>
+              </div>
+            </div>
+            <div className="settings-source">
+              <Globe size={20} />
+              <div>
+                <h3>Website research</h3>
+                <p>Status: {profile?.research_status || "Not started"}</p>
+                <p>
+                  Findings may include inferred details. Review the source data before approving.
+                </p>
+              </div>
+            </div>
+            {hasResearchedFacts && (
+              <details className="settings-evidence">
+                <summary>View research findings</summary>
+                <pre>{JSON.stringify(profile?.researched, null, 2)}</pre>
+              </details>
+            )}
+            <div className="settings-source">
+              <ShieldCheck size={20} />
+              <div>
+                <h3>{isFactsConfirmed ? "Facts approved" : "Approval pending"}</h3>
+                <p>
+                  {isFactsConfirmed
+                    ? "This profile has approved facts for qualification."
+                    : "Approve the current business details after reviewing your profile and research."}
+                </p>
+                {!isFactsConfirmed && (
+                  <button
+                    className="settings-button"
+                    type="button"
+                    onClick={handleConfirmFacts}
+                    disabled={confirming || saving}
+                  >
+                    {confirming ? "Approving…" : "Approve business facts"}
+                  </button>
+                )}
+              </div>
+            </div>
+          </section>
         </div>
+        <footer className="settings-footer">
+          <span>Changes apply to future runs.</span>
+          <button className="settings-button primary" type="submit" disabled={saving || confirming}>
+            <Save size={16} />
+            {saving ? "Saving…" : "Save profile"}
+          </button>
+        </footer>
       </form>
     </div>
   );

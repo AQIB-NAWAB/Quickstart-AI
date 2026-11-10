@@ -25,6 +25,11 @@ import {
   runInput,
   fail,
   policyInput,
+  connectorInput,
+  collectionInput,
+  applyFieldMapping,
+  leadSalesUpdateInput,
+  scheduleInput,
 } from "./domain.js";
 
 function param(req: Request, name: string): string {
@@ -142,6 +147,64 @@ export function createServer(
       res.type("text/plain").send(lines.join("\n") + "\n");
     }),
   );
+  router.post(
+    "/v1/inbound/ingest/:connectorId",
+    asyncHandler(async (req, res) => {
+      const connectorId = uuid(param(req, "connectorId"));
+      const rawToken = bearerTokenFromHeader(req.headers.authorization);
+      if (!rawToken) {
+        fail("Inbound connector authentication required", ErrorCode.UNAUTHORIZED);
+      }
+      const rawBody = req.body;
+      let records: Record<string, unknown>[] = [];
+      let bodyCollectionId: string | undefined;
+
+      if (Array.isArray(rawBody)) {
+        records = rawBody.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null);
+      } else if (rawBody && typeof rawBody === "object") {
+        const obj = rawBody as Record<string, unknown>;
+        if (typeof obj.collection_id === "string") bodyCollectionId = obj.collection_id;
+        else if (typeof obj.collectionId === "string") bodyCollectionId = obj.collectionId;
+
+        if (Array.isArray(obj.records)) {
+          records = obj.records.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null);
+        } else if (Array.isArray(obj.items)) {
+          records = obj.items.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null);
+        } else if (Array.isArray(obj.leads)) {
+          records = obj.leads.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null);
+        } else {
+          // Single lead record
+          records = [obj];
+        }
+      }
+
+      if (records.length === 0) {
+        fail("No lead records found in payload", ErrorCode.VALIDATION_FAILED);
+      }
+
+      const idempotencyKey =
+        (typeof req.headers["idempotency-key"] === "string" && req.headers["idempotency-key"]) ||
+        (typeof req.headers["x-idempotency-key"] === "string" && req.headers["x-idempotency-key"]) ||
+        (rawBody && typeof rawBody === "object" && typeof (rawBody as any).idempotency_key === "string" && (rawBody as any).idempotency_key) ||
+        undefined;
+
+      const headerCollectionId = typeof req.headers["x-collection-id"] === "string" ? req.headers["x-collection-id"] : undefined;
+      const queryCollectionId = typeof req.query.collection_id === "string" ? req.query.collection_id : undefined;
+      const collectionId = headerCollectionId || queryCollectionId || bodyCollectionId;
+
+      const result = await store.ingestInboundBatch({
+        connectorId,
+        token: rawToken,
+        idempotencyKey,
+        records,
+        collectionId,
+        config,
+      });
+
+      res.status(result.status === "failed" ? 422 : 200).json(result);
+    }),
+  );
+
   const base = "/v1/workspaces/:workspaceId/lead-generation";
   const orgCache = new Map<string, { orgId: string; expiresAt: number }>();
   const roleCache = new Map<string, { role: Parameters<typeof roleHasPermission>[0]; expiresAt: number }>();
@@ -250,6 +313,77 @@ export function createServer(
       }),
     );
   router.get(
+    `${base}/leads/:leadId`,
+    asyncHandler(async (req, res) =>
+      res.json({ lead: await store.getLeadWithDetails(identity(res), uuid(param(req, "leadId"))) }),
+    ),
+  );
+  router.patch(
+    `${base}/leads/:leadId/sales-status`,
+    asyncHandler(async (req, res) => {
+      const b = object(req.body);
+      const update = leadSalesUpdateInput(b);
+      const lead = await store.updateLeadSalesStatus(
+        identity(res),
+        uuid(param(req, "leadId")),
+        update.status,
+        update.notes,
+        update.user_edited_fields,
+      );
+      res.json({ lead });
+    }),
+  );
+  router.get(
+    `${base}/leads/:leadId/observations`,
+    asyncHandler(async (req, res) =>
+      res.json({ items: await store.getLeadObservations(identity(res), uuid(param(req, "leadId"))) }),
+    ),
+  );
+  router.post(
+    `${base}/leads/export/csv`,
+    asyncHandler(async (req, res) => {
+      const runId = req.query.run_id ? uuid(req.query.run_id) : undefined;
+      const csv = await store.exportLeadsToCsv(identity(res), runId);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="leads-export.csv"');
+      res.send(csv);
+    }),
+  );
+  router.get(
+    `${base}/schedules`,
+    asyncHandler(async (_req, res) =>
+      res.json({ items: await store.listSchedules(identity(res)) }),
+    ),
+  );
+  router.post(
+    `${base}/schedules`,
+    asyncHandler(async (req, res) => {
+      const sched = scheduleInput(req.body);
+      res.status(201).json({ schedule: await store.createSchedule(identity(res), sched) });
+    }),
+  );
+  router.get(
+    `${base}/schedules/:scheduleId`,
+    asyncHandler(async (req, res) =>
+      res.json({ schedule: await store.getSchedule(identity(res), uuid(param(req, "scheduleId"))) }),
+    ),
+  );
+  router.patch(
+    `${base}/schedules/:scheduleId`,
+    asyncHandler(async (req, res) => {
+      const scheduleId = uuid(param(req, "scheduleId"));
+      const current = await store.getSchedule(identity(res), scheduleId);
+      const patch = scheduleInput({ ...current, ...object(req.body) });
+      res.json({ schedule: await store.updateSchedule(identity(res), scheduleId, patch) });
+    }),
+  );
+  router.delete(
+    `${base}/schedules/:scheduleId`,
+    asyncHandler(async (req, res) =>
+      res.json(await store.deleteSchedule(identity(res), uuid(param(req, "scheduleId")))),
+    ),
+  );
+  router.get(
     `${base}/runs/:runId`,
     asyncHandler(async (req, res) =>
       res.json({ run: await store.run(identity(res), uuid(param(req, "runId"))) }),
@@ -317,10 +451,190 @@ export function createServer(
       res.json({ items: rows, next_cursor: rows.length === p.limit ? rows.at(-1).id : null });
     }),
   );
+
+  // Profile Confirmation
+  router.post(
+    `${base}/profile/confirm`,
+    asyncHandler(async (req, res) => {
+      const b = object(req.body);
+      const confirmedFacts = object(b.confirmed_facts ?? b.confirmedFacts ?? {});
+      const inferences = (b.inferences && typeof b.inferences === "object" && !Array.isArray(b.inferences))
+        ? (b.inferences as Record<string, unknown>)
+        : undefined;
+      const profile = await store.confirmProfileFacts(identity(res), {
+        approved: b.approved !== false,
+        confirmed_facts: confirmedFacts,
+        inferences,
+        notes: typeof b.notes === "string" ? b.notes : undefined,
+      });
+      res.json({ profile });
+    }),
+  );
+
+  // Collections CRUD
+  router.get(
+    `${base}/collections`,
+    asyncHandler(async (_req, res) => {
+      const collections = await store.listCollections(identity(res));
+      res.json({ items: collections });
+    }),
+  );
+  router.post(
+    `${base}/collections`,
+    asyncHandler(async (req, res) => {
+      const input = collectionInput(req.body);
+      const collection = await store.createCollection(identity(res), input);
+      res.status(201).json({ collection });
+    }),
+  );
+  router.get(
+    `${base}/collections/:collectionId`,
+    asyncHandler(async (req, res) => {
+      const collection = await store.getCollection(identity(res), uuid(param(req, "collectionId")));
+      res.json({ collection });
+    }),
+  );
+  router.patch(
+    `${base}/collections/:collectionId`,
+    asyncHandler(async (req, res) => {
+      const collection = await store.updateCollection(
+        identity(res),
+        uuid(param(req, "collectionId")),
+        object(req.body),
+      );
+      res.json({ collection });
+    }),
+  );
+  router.delete(
+    `${base}/collections/:collectionId`,
+    asyncHandler(async (req, res) => {
+      await store.deleteCollection(identity(res), uuid(param(req, "collectionId")));
+      res.json({ ok: true });
+    }),
+  );
+
+  // Connectors CRUD
+  router.get(
+    `${base}/connectors`,
+    asyncHandler(async (_req, res) => {
+      const connectors = await store.listConnectors(identity(res));
+      res.json({ items: connectors });
+    }),
+  );
+  router.post(
+    `${base}/connectors`,
+    asyncHandler(async (req, res) => {
+      const input = connectorInput(req.body);
+      const result = await store.createConnector(identity(res), input);
+      res.status(201).json(result);
+    }),
+  );
+  router.get(
+    `${base}/connectors/:connectorId`,
+    asyncHandler(async (req, res) => {
+      const connector = await store.getConnector(identity(res), uuid(param(req, "connectorId")));
+      res.json({ connector });
+    }),
+  );
+  router.patch(
+    `${base}/connectors/:connectorId`,
+    asyncHandler(async (req, res) => {
+      const connector = await store.updateConnector(
+        identity(res),
+        uuid(param(req, "connectorId")),
+        object(req.body),
+      );
+      res.json({ connector });
+    }),
+  );
+  router.post(
+    `${base}/connectors/:connectorId/rotate`,
+    asyncHandler(async (req, res) => {
+      const result = await store.rotateConnectorToken(
+        identity(res),
+        uuid(param(req, "connectorId")),
+      );
+      res.json(result);
+    }),
+  );
+  router.delete(
+    `${base}/connectors/:connectorId`,
+    asyncHandler(async (req, res) => {
+      await store.revokeConnector(identity(res), uuid(param(req, "connectorId")));
+      res.json({ ok: true });
+    }),
+  );
+  router.get(
+    `${base}/connectors/:connectorId/batches`,
+    asyncHandler(async (req, res) => {
+      const batches = await store.listInboundBatches(
+        identity(res),
+        uuid(param(req, "connectorId")),
+      );
+      res.json({ items: batches });
+    }),
+  );
+  router.get(
+    `${base}/inbound/batches`,
+    asyncHandler(async (_req, res) => {
+      const batches = await store.listInboundBatches(identity(res));
+      res.json({ items: batches });
+    }),
+  );
+
+  // Field Mapping Testing and Suggestion
+  router.post(
+    `${base}/connectors/test-mapping`,
+    asyncHandler(async (req, res) => {
+      const b = object(req.body);
+      const sample = object(b.sample_payload ?? b.samplePayload ?? {});
+      const mapping = (b.mapping && typeof b.mapping === "object" && !Array.isArray(b.mapping))
+        ? (b.mapping as Record<string, string>)
+        : {};
+      const transformed = applyFieldMapping(sample, mapping);
+      const targetFields = ["company_name", "website", "person_name", "person_role", "email", "phone", "industry", "location"];
+      const missing = targetFields.filter((f) => !transformed[f] || (typeof transformed[f] === "string" && !(transformed[f] as string).trim()));
+      res.json({ transformed, missing_fields: missing });
+    }),
+  );
+  router.post(
+    `${base}/connectors/suggest-mapping`,
+    asyncHandler(async (req, res) => {
+      const b = object(req.body);
+      const sample = object(b.sample_payload ?? b.samplePayload ?? {});
+      const sampleKeys = Object.keys(sample);
+
+      const fieldKeywords: Record<string, string[]> = {
+        company_name: ["company", "companyname", "organization", "org", "business", "businessname"],
+        website: ["website", "domain", "url", "web", "link", "site"],
+        person_name: ["name", "fullname", "contactname", "person", "leadname", "decisionmaker"],
+        person_role: ["role", "title", "jobtitle", "position", "occupation"],
+        email: ["email", "mail", "contactemail", "workemail"],
+        phone: ["phone", "tel", "telephone", "mobile", "contactphone"],
+        location: ["location", "city", "country", "geo", "address", "state", "headquarters"],
+        industry: ["industry", "sector", "category", "vertical", "niche"],
+        company_size: ["size", "employees", "headcount", "staff", "employeecount"],
+        external_id: ["id", "_id", "externalid", "recordid", "leadid"],
+      };
+
+      const suggestedMapping: Record<string, string> = {};
+      for (const [targetField, keywords] of Object.entries(fieldKeywords)) {
+        for (const k of sampleKeys) {
+          const lower = k.toLowerCase().replace(/[^a-z0-9]/g, "");
+          if (keywords.includes(lower)) {
+            suggestedMapping[k] = targetField;
+            break;
+          }
+        }
+      }
+      res.json({ suggested_mapping: suggestedMapping });
+    }),
+  );
+
   return createPlatformApp({
     logger,
     apiRouter: router,
-    jsonBodyLimit: "64kb",
+    jsonBodyLimit: "512kb",
     requestTimeoutMs: 15000,
   });
 }

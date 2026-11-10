@@ -12,6 +12,7 @@ export const INTEGRATION_PROVIDERS = [
   "google_sheets",
   "notion",
   "mailchimp",
+  "apify",
 ] as const;
 
 export type IntegrationProvider = (typeof INTEGRATION_PROVIDERS)[number];

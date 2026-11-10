@@ -141,7 +141,7 @@ export class AcquisitionOrchestrator {
         if (!provider.search) continue;
 
         try {
-          const output = await this.callWithBreaker(profileId, async () =>
+          const output = await this.callWithBreaker(`${profileId}:search`, async () =>
             provider.search!({
               query: body.query,
               maxResults,
@@ -255,13 +255,13 @@ export class AcquisitionOrchestrator {
 
     for (const profileId of decision.profileIds) {
       let attempt = 0;
-      const maxAttempts = 2;
+      const maxAttempts = this.registry.get(profileId).driver === "apify" ? 1 : 2;
 
       while (attempt < maxAttempts) {
         attempt += 1;
         try {
           const provider = this.registry.get(profileId);
-          const output = await this.callWithBreaker(profileId, async () =>
+          const output = await this.callWithBreaker(`${profileId}:scrape`, async () =>
             provider.scrape({
               url: input.url,
               renderJs: input.renderJs,
@@ -329,6 +329,44 @@ export class AcquisitionOrchestrator {
         });
       }
       throw error;
+    }
+  }
+
+  async enrichBusinessProfile(body: {
+    workspace_id: string;
+    request_id: string;
+    business_name: string;
+    location?: string;
+    website?: string;
+  }) {
+    assertWorkspaceId(body.workspace_id);
+    const provider = typeof this.registry.findDriver === "function" ? this.registry.findDriver("apify") : undefined;
+    if (!provider || typeof provider.enrichBusinessProfile !== "function") {
+      return null;
+    }
+    const started = Date.now();
+    try {
+      const result = await provider.enrichBusinessProfile({
+        workspaceId: body.workspace_id,
+        businessName: body.business_name,
+        location: body.location,
+        website: body.website,
+      });
+      this.logger.info("acquisition.enrich_profile", {
+        workspace_id: body.workspace_id,
+        request_id: body.request_id,
+        provider: "apify",
+        found: Boolean(result),
+        latency_ms: Date.now() - started,
+      });
+      return result;
+    } catch (error) {
+      this.logger.warn("acquisition.enrich_profile_failed", {
+        workspace_id: body.workspace_id,
+        request_id: body.request_id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
     }
   }
 }

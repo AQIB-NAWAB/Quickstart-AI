@@ -280,11 +280,11 @@ export class CampaignsService {
       {
         dialAddress: dialNormalized,
         dialNormalized,
-        displayName: payload.lead.company_name || null,
+        displayName: payload.lead.company_name || payload.lead.person_name || null,
         email: payload.lead.email,
         attributes: sanitizeAttributes(
           {
-            website: payload.lead.website,
+            website: payload.lead.website ?? "",
             category: payload.lead.category,
             location: payload.lead.location ?? "",
             fit_score: String(payload.lead.fit_score),

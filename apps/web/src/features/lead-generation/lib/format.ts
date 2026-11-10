@@ -47,20 +47,28 @@ export function formatStopReason(reason?: string | null): string | null {
   if (!reason) return null;
   const normalized = reason.toLowerCase().trim();
   switch (normalized) {
+    case "provider_quota_exhausted":
+      return "AI provider quota exhausted. Retry after its allowance resets or connect a funded provider";
+    case "user_cancelled":
+      return "Cancelled by user";
+    case "research_round_limit":
+      return "Configured research rounds finished before the target was met";
+    case "research_errors":
+      return "Research finished with provider or task errors";
     case "sources_exhausted":
-      return "Research stopped: sources exhausted.";
+      return "Configured discovery finished";
     case "budget_reached":
-      return "Stopped when the research budget was reached.";
+      return "Research budget reached";
     case "target_reached":
-      return "Stopped when target candidate count was reached.";
+      return "Target candidate count reached";
     case "cancelled":
-      return "Stopped because the research run was cancelled.";
+      return "Research run cancelled";
     case "completed":
-      return "All research tasks finished successfully.";
+      return "All research tasks completed";
     case "timed_out":
-      return "Stopped because the execution time limit was reached.";
+      return "Execution time limit reached";
     default:
-      return `Stopped: ${reason.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}.`;
+      return reason.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   }
 }
 

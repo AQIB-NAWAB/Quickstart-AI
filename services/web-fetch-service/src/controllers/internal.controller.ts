@@ -95,5 +95,29 @@ export function createInternalController(
       };
       sendPlatformJson(res, 200, payload);
     },
+
+    enrichProfile: async (req: Request, res: Response): Promise<void> => {
+      const body = req.body as {
+        workspace_id: string;
+        request_id: string;
+        business_name: string;
+        location?: string;
+        website?: string;
+      };
+      if (!body.workspace_id || !body.business_name) {
+        throw new AppError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message: "workspace_id and business_name are required",
+        });
+      }
+      const result = await orchestrator.enrichBusinessProfile({
+        workspace_id: body.workspace_id,
+        request_id: body.request_id || "enrich",
+        business_name: body.business_name,
+        location: body.location,
+        website: body.website,
+      });
+      sendPlatformJson(res, 200, { profile: result });
+    },
   };
 }

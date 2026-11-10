@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, KeyRound, LogOut, X } from "lucide-react";
+import { CheckCircle2, ExternalLink, KeyRound, LogOut, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { IntegrationCatalogItem } from "../lib/types";
 
@@ -22,6 +22,7 @@ export function ConfigureIntegrationDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const [accountSid, setAccountSid] = useState("");
   const [authToken, setAuthToken] = useState("");
+  const [apiToken, setApiToken] = useState("");
   const [saving, setSaving] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +39,7 @@ export function ConfigureIntegrationDialog({
       setError(null);
       setAccountSid("");
       setAuthToken("");
+      setApiToken("");
     }
     return () => {
       document.removeEventListener("keydown", handleKeyDown);
@@ -49,6 +51,7 @@ export function ConfigureIntegrationDialog({
 
   const isConnected = integration.status === "connected";
   const isTwilio = integration.id === "twilio";
+  const isApify = integration.id === "apify";
 
   async function handleSaveCredentials(e: React.FormEvent) {
     e.preventDefault();
@@ -56,10 +59,18 @@ export function ConfigureIntegrationDialog({
       setError("Please provide both Account SID and Auth Token.");
       return;
     }
+    if (isApify && !apiToken.trim()) {
+      setError("Please provide your Apify API Token.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
-      await onSaveCredentials({ accountSid, authToken });
+      if (isApify) {
+        await onSaveCredentials({ apiToken: apiToken.trim() });
+      } else {
+        await onSaveCredentials({ accountSid, authToken });
+      }
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save credentials");
@@ -173,6 +184,59 @@ export function ConfigureIntegrationDialog({
               </button>
             </div>
           </div>
+        ) : isApify ? (
+          /* Apify connection & auth redirect form */
+          <form onSubmit={handleSaveCredentials} className="space-y-4">
+            <div className="p-3 bg-amber-50/70 border border-amber-200 rounded-8 text-xs text-amber-900 space-y-2">
+              <p className="font-semibold text-amber-950">Step 1: Authorize access on Apify</p>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Click below to open your Apify account in a new tab, grant permission or generate your personal API token.
+              </p>
+              <a
+                href="https://console.apify.com/account/integrations"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-6 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 text-xs font-semibold shadow-xs transition-colors"
+              >
+                <ExternalLink className="w-3.5 h-3.5 text-amber-700" />
+                <span>Open Apify Integrations Console</span>
+              </a>
+            </div>
+
+            <div className="space-y-1 pt-1">
+              <label className="text-xs font-semibold text-[#18181B]">Step 2: Paste your Apify API Token</label>
+              <input
+                type="password"
+                value={apiToken}
+                onChange={(e) => setApiToken(e.target.value)}
+                placeholder="apify_api_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                className="w-full px-3 py-2 rounded-8 border border-[#EAECF0] text-xs font-mono focus:outline-none focus:ring-1 focus:ring-[#FF571A]"
+                required
+              />
+              <p className="text-[11px] text-[#71717A]">
+                QuickStart AI will verify your token live with Apify and link your account.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-4 border-t border-[#EAECF0]">
+              <button
+                type="button"
+                onClick={onClose}
+                disabled={saving}
+                className="px-4 py-2 rounded-8 bg-white border border-[#DCE1E8] text-xs font-semibold text-[#344054] hover:bg-neutral-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-8 bg-[#FF571A] hover:bg-[#E0460D] text-white text-xs font-semibold shadow-xs transition-colors disabled:opacity-50"
+              >
+                <KeyRound className="w-3.5 h-3.5" />
+                <span>{saving ? "Verifying with Apify..." : "Connect Apify Account"}</span>
+              </button>
+            </div>
+          </form>
         ) : isTwilio ? (
           /* Twilio credential input form */
           <form onSubmit={handleSaveCredentials} className="space-y-4">

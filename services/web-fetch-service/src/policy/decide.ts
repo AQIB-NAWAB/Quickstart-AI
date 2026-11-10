@@ -20,7 +20,11 @@ export function decideAcquisitionProviders(input: PolicyInput): PolicyDecision {
 
   if (input.action === "search") {
     const searchCapable = enabled.filter(
-      (p) => p.driver === "olostep" || p.driver === "firecrawl" || p.driver === "fake",
+      (p) =>
+        p.driver === "apify" ||
+        p.driver === "olostep" ||
+        p.driver === "firecrawl" ||
+        p.driver === "fake",
     );
     const ordered = orderProfiles(searchCapable, input.preferProfileIds);
     if (ordered.length === 0) {
@@ -31,7 +35,11 @@ export function decideAcquisitionProviders(input: PolicyInput): PolicyDecision {
 
   if (input.renderJs) {
     const js = enabled.filter(
-      (p) => p.driver === "olostep" || p.driver === "firecrawl" || p.driver === "fake",
+      (p) =>
+        p.driver === "apify" ||
+        p.driver === "fake" ||
+        p.driver === "olostep" ||
+        p.driver === "firecrawl",
     );
     const ordered = orderProfiles(js, input.preferProfileIds);
     if (ordered.length === 0) {
@@ -41,9 +49,15 @@ export function decideAcquisitionProviders(input: PolicyInput): PolicyDecision {
   }
 
   const allScrapeCapable = enabled.filter(
-    (p) => p.driver === "direct_http" || p.driver === "olostep" || p.driver === "firecrawl" || p.driver === "fake",
+    (p) =>
+      p.driver === "apify" ||
+      p.driver === "direct_http" ||
+      p.driver === "fake" ||
+      p.driver === "firecrawl" ||
+      p.driver === "olostep",
   );
   const chain = orderProfiles(allScrapeCapable, input.preferProfileIds);
+  if (!input.preferProfileIds?.length) chain.sort((a, b) => Number(b.driver === "direct_http") - Number(a.driver === "direct_http"));
   const unique = dedupeById(chain);
   if (unique.length === 0) {
     return { allow: false, reason: "no_scrape_provider" };

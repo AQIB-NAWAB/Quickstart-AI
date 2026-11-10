@@ -30,6 +30,7 @@ export class ProviderRegistry {
     this.registerZendeskAdapter();
     this.registerNotionAdapter();
     this.registerMailchimpAdapter();
+    this.registerApifyAdapter();
   }
 
   getAdapter(provider: IntegrationProvider): ProviderAdapter {
@@ -1016,6 +1017,78 @@ export class ProviderRegistry {
           return { recordsSynced: items.length, resources: items };
         }
         return { recordsSynced: 0 };
+      },
+    });
+  }
+
+  // 10. Apify
+  private registerApifyAdapter(): void {
+    const capabilities: ProviderCapabilities = {
+      authorizationSupport: "credentials",
+      credentialVerification: true,
+      accountDiscovery: true,
+      refreshSupport: false,
+      revocationSupport: false,
+      supportedOperations: ["run_actor", "fetch_dataset", "list_actors"],
+      syncDirections: ["inbound"],
+      requiredScopes: [],
+      rateLimitPerMinute: 600,
+    };
+
+    this.adapters.set("apify", {
+      provider: "apify",
+      capabilities,
+      getAuthorizationUrl() {
+        return {
+          url: "https://console.apify.com/account/integrations",
+          state: "",
+        };
+      },
+      async exchangeCode() {
+        throw new AppError({
+          code: ErrorCode.VALIDATION_FAILED,
+          message: "Apify uses API token authentication. Please provide your Apify API Token.",
+        });
+      },
+      async verifyCredentials(credentials: Record<string, string>): Promise<ProviderCredentialsVerification> {
+        const token = (credentials.apiToken || credentials.token || credentials.apiKey || credentials.api_token || "").trim();
+        if (!token) {
+          throw new AppError({
+            code: ErrorCode.VALIDATION_FAILED,
+            message: "Apify API Token is required.",
+          });
+        }
+
+        const res = await fetch("https://api.apify.com/v2/users/me", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new AppError({
+            code: ErrorCode.UNAUTHORIZED,
+            message: `Apify authentication failed (HTTP ${res.status}): ${text.slice(0, 150) || "Invalid API token"}`,
+          });
+        }
+
+        const json = (await res.json()) as { data?: { id?: string; username?: string; email?: string; profile?: { name?: string }; plan?: { id?: string } } };
+        const data = json.data || {};
+        const userId = data.id || "apify_user";
+        const username = data.username || data.profile?.name || "Apify Account";
+
+        return {
+          valid: true,
+          accountIdentifier: userId,
+          accountEmail: data.email || null,
+          accountName: username,
+          providerAccountId: userId,
+          metadata: {
+            username,
+            email: data.email,
+            plan: data.plan?.id,
+            verified_at: new Date().toISOString(),
+          },
+        };
       },
     });
   }

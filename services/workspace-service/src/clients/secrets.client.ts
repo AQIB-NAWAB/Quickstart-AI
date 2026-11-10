@@ -1,4 +1,5 @@
 import { fetchWithPolicy } from "@quickstart/utilities";
+import { AppError, ErrorCode } from "@quickstart/errors";
 
 export class SecretsClient {
   private readonly baseUrl: string;
@@ -15,23 +16,28 @@ export class SecretsClient {
     const secretName = `integration_${provider}_credentials`;
     const payload = JSON.stringify(value);
 
-    const res = await fetchWithPolicy(
-      `${this.baseUrl}/internal/workspaces/${encodeURIComponent(workspaceId)}/secrets`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${this.internalToken}`,
-          "content-type": "application/json",
+    try {
+      const res = await fetchWithPolicy(
+        `${this.baseUrl}/internal/workspaces/${encodeURIComponent(workspaceId)}/secrets`,
+        {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${this.internalToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ name: secretName, value: payload }),
         },
-        body: JSON.stringify({ name: secretName, value: payload }),
-      },
-      { timeoutMs: this.timeoutMs, maxRetries: 0 },
-    );
+        { timeoutMs: this.timeoutMs, maxRetries: 0 },
+      );
 
-    if (!res.ok) {
-      throw new Error(`Failed to store encrypted credentials in secrets-service: HTTP ${res.status}`);
+      if (!res.ok) {
+        throw new Error("Vault write failed");
+      }
+      return secretName;
+    } catch {
+      throw new AppError({ code: ErrorCode.UPSTREAM_UNAVAILABLE,
+        message: "Credential vault unavailable. Connection was not saved; please retry after the vault is healthy." });
     }
-    return secretName;
   }
 
   async getIntegrationSecret(workspaceId: string, provider: string): Promise<Record<string, unknown> | null> {

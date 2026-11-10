@@ -40,8 +40,9 @@ export function loadConfig() {
     campaignToken: process.env.LEAD_CAMPAIGN_TOKEN ?? "",
     pollMs: 1000,
     leaseSeconds: 120,
-    requestTimeoutMs: 30000,
-    maxOutputTokens: 1500,
+    requestTimeoutMs: 45000,
+    maxOutputTokens: Math.max(1500, Math.min(16000, Number(process.env.LEAD_MODEL_MAX_OUTPUT_TOKENS ?? (modelProfile === "gemini" ? 6000 : 1500)))),
+    modelMinIntervalSeconds: Math.max(0, Math.min(300, Number(process.env.LEAD_MODEL_MIN_INTERVAL_SECONDS ?? 45))),
     workersEnabled: process.env.LEAD_WORKERS_ENABLED !== "false",
   };
 }

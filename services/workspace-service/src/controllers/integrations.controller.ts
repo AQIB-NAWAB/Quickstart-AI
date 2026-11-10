@@ -130,8 +130,9 @@ export function createIntegrationsController(service: IntegrationsService) {
     credentials: (async (req, res) => {
       const workspaceId = getWorkspaceId(req);
       const provider = getProvider(req);
-      const body = (req.body ?? {}) as { credentials?: Record<string, string> };
-      const result = await service.saveCredentials(workspaceId, provider, body.credentials ?? {});
+      const body = (req.body ?? {}) as { credentials?: Record<string, string> } & Record<string, string>;
+      const creds = body.credentials ?? body;
+      const result = await service.saveCredentials(workspaceId, provider, creds);
       sendPlatformJson(res, 200, {
         request_id: requestIdFromResponse(res),
         integration: result,

@@ -42,6 +42,7 @@ function toProviderInput(
     tools: body.tools,
     temperature: body.temperature,
     maxTokens: body.max_tokens,
+responseFormat: body.response_format,
     reasoningEffort: body.reasoning_effort,
     verbosity: body.verbosity,
     context: {
@@ -222,7 +223,14 @@ export class CompletionOrchestrator {
       try {
         const output = await breaker.execute(
           () => this.withTimeout(provider, toProviderInput(body, model, attempt), options),
-          (err) => !(err instanceof ProviderError && err.httpStatus === 429),
+          (err) =>
+            !(
+              err instanceof ProviderError &&
+              (err.httpStatus === 429 ||
+                err.httpStatus === 413 ||
+                err.message.includes("rate_limit_exceeded") ||
+                err.message.includes("TPM"))
+            ),
         );
         return { provider, output };
       } catch (error) {

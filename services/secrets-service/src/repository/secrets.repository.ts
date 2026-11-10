@@ -23,6 +23,7 @@ export type SecretSummaryRow = {
 };
 
 export type SecretAudit = {
+  serviceActor?: boolean;
   actorUserId: string;
   requestId: string;
 };
@@ -94,6 +95,7 @@ export class SecretsRepository {
           requestId: input.audit.requestId,
           metadata: {
             name: row.name,
+            actor_type: input.audit.serviceActor ? "internal_service" : "user",
             key_version: row.key_version,
           },
         });
@@ -139,6 +141,7 @@ export class SecretsRepository {
           requestId: input.audit.requestId,
           metadata: {
             name: row.name,
+            actor_type: input.audit.serviceActor ? "internal_service" : "user",
             key_version: row.key_version,
           },
         });
@@ -184,6 +187,7 @@ export class SecretsRepository {
           requestId: audit.requestId,
           metadata: {
             name: row.name,
+            actor_type: audit.serviceActor ? "internal_service" : "user",
             key_version: row.key_version,
           },
         });

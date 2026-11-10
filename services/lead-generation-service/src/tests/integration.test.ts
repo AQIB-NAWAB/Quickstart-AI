@@ -38,7 +38,7 @@ const business = {
   target_categories: ["clinics"],
   locations: ["Lahore"],
 };
-const brief = () => runInput({ categories: ["clinics"], location: "Lahore", target_count: 10 });
+const brief = () => runInput({ categories: ["clinics"], location: "Lahore", target_count: 10, qualification_mode: "strict" });
 const logger = createLogger({ service: "lead-test" });
 async function fixture() {
   const db = await database();
@@ -322,6 +322,10 @@ test("HTTP verifies JWT, ignores spoofed auth context, authorizes roles and scop
     );
     role = "owner";
     const run = await f.store.createRun(f.i, brief(), "scope");
+    const csv = await fetch(`${base}/leads/export/csv?run_id=${run.run.id}`, {method: "POST", headers});
+    assert.equal(csv.status, 200);
+    assert.match(csv.headers.get("content-type") ?? "", /text\/csv/);
+    assert.match(await csv.text(), /Company Name/);
     await assert.rejects(() => f.store.run(other, run.run.id), /not found/);
     const cross = await fetch(
       `${root}/v1/workspaces/${other.workspaceId}/lead-generation/runs/${run.run.id}`,
@@ -455,7 +459,14 @@ test("a neighborhood inside the target city counts as the same location", () => 
   assert.equal(result.data.location, "Gulberg, Lahore, Pakistan");
 
   const otherCity = qualify(
-    { ...raw, location: "Karachi, Pakistan", target_checks: { category_match: true, location_match: true } },
+    {
+      ...raw, location: "Karachi, Pakistan", target_checks: { category_match: true, location_match: true },
+      evidence: raw.evidence.map((item) => ({
+        ...item,
+        value: item.field === "location" ? "Karachi, Pakistan" : item.value,
+        quote: "Example Clinic is a clinic in Karachi, Pakistan.",
+      })),
+    },
     [{ url: page.url, text: "Example Clinic is a clinic in Karachi, Pakistan." }],
     { ...brief(), location: "Lahore, Pakistan" },
     page.url,
@@ -520,7 +531,9 @@ test("live workers cannot consume demo tasks or use demo business profiles", asy
     const live = new Store(f.pool, "live");
     assert.equal(await live.claim(120), null);
     assert.equal(await live.profile(f.i), null);
-    await assert.rejects(() => live.createRun(f.i, brief(), "live"), /business profile/);
+    const direct = await live.createRun(f.i, brief(), "live");
+    assert.equal(direct.run.profile_id, null);
+    assert.equal(direct.run.profile_snapshot.supplied.name, "", "Direct live search must not inherit the demo profile");
     await live.putProfile(f.i, business, 0);
     const task = await live.claim(120);
     assert.ok(task);
@@ -850,4 +863,59 @@ test("gateway preserves permanent scrape failures and rejects simulated live cam
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }
+});
+
+test("daily model quota stops a run promptly instead of burning retries until its deadline", async () => {
+  const f = await fixture();
+  const upstream = http.createServer((_req, res) => {
+    res.writeHead(429, {"content-type":"application/json"});
+    res.end(JSON.stringify({error:{message:"Rate limit reached on tokens per day (TPD): Limit 200000, Used 199000"}}));
+  });
+  await new Promise<void>(resolve => upstream.listen(0,"127.0.0.1",resolve));
+  try {
+    await drain(f);
+    const {run}=await f.store.createRun(f.i,brief(),"daily-quota");
+    const task=(await f.store.claim(120))!;
+    const provider=new GatewayResearchProvider({modelUrl:`http://127.0.0.1:${(upstream.address() as {port:number}).port}`,modelToken:"test",requestTimeoutMs:1000,maxOutputTokens:100,modelMinIntervalSeconds:0} as Config,f.store);
+    let failure: ResearchError | undefined;
+    try { await provider.json(task,"Return JSON",{}); } catch(error) { if(error instanceof ResearchError) failure=error; else throw error; }
+    assert.equal(failure?.code,"MODEL_QUOTA_EXHAUSTED");
+    assert.equal(failure?.retryable,false);
+    await f.store.failed(task,failure!.code,failure!.retryable);
+    const stopped=await f.store.run(f.i,run.id);
+    assert.equal(stopped.status,"completed_with_errors");
+    assert.equal(stopped.stop_reason,"provider_quota_exhausted");
+    assert.equal(Number((await f.pool.query("SELECT count(*) AS count FROM lg_tasks WHERE run_id=$1 AND state IN ('running','queued')",[run.id])).rows[0].count),0);
+  } finally {
+    await new Promise<void>(resolve=>upstream.close(()=>resolve()));
+    await f.close();
+  }
+});
+
+test("truncated model output is not repaired into an accepted partial qualification", async () => {
+  const f=await fixture();
+  const upstream=http.createServer((_req,res)=>{
+    res.setHeader("content-type","application/json");
+    res.end(JSON.stringify({provider:"gemini",content:'{"company_name":"Partial"}',finish_reason:"length",usage:{input_tokens:20,output_tokens:10}}));
+  });
+  await new Promise<void>(resolve=>upstream.listen(0,"127.0.0.1",resolve));
+  try {
+    const task=(await f.store.claim(120))!;
+    const provider=new GatewayResearchProvider({modelUrl:`http://127.0.0.1:${(upstream.address() as {port:number}).port}`,modelToken:"test",modelProfile:"gemini",modelId:"test",requestTimeoutMs:1000,maxOutputTokens:6000,modelMinIntervalSeconds:0} as Config,f.store);
+    await assert.rejects(()=>provider.json(task,"Return JSON",{}),error=>error instanceof ResearchError && error.code==="MODEL_OUTPUT_TRUNCATED" && error.retryable===false);
+  } finally { await new Promise<void>(resolve=>upstream.close(()=>resolve())); await f.close(); }
+});
+
+test("Gemini free-tier daily request quota is terminal rather than a minute cooldown", async () => {
+  const f=await fixture();
+  const upstream=http.createServer((_req,res)=>{
+    res.writeHead(429,{"content-type":"application/json"});
+    res.end(JSON.stringify({error:{message:'upstream 429: [{"error":{"message":"Generate content requests per day limit exceeded on Free Tier","details":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier","quotaValue":"20"}]}}]'}}));
+  });
+  await new Promise<void>(resolve=>upstream.listen(0,"127.0.0.1",resolve));
+  try {
+    const task=(await f.store.claim(120))!;
+    const provider=new GatewayResearchProvider({modelUrl:`http://127.0.0.1:${(upstream.address() as {port:number}).port}`,modelToken:"test",modelProfile:"gemini",modelId:"test",requestTimeoutMs:1000,maxOutputTokens:6000,modelMinIntervalSeconds:0} as Config,f.store);
+    await assert.rejects(()=>provider.json(task,"Return JSON",{}),error=>error instanceof ResearchError && error.code==="MODEL_QUOTA_EXHAUSTED" && error.retryable===false);
+  } finally { await new Promise<void>(resolve=>upstream.close(()=>resolve())); await f.close(); }
 });

@@ -352,6 +352,8 @@ export class OpenAiCompatibleProvider implements ChatProvider {
       messages: mapMessages(input.messages),
       stream,
     };
+    if (input.responseFormat) body.response_format = input.responseFormat;
+    if (input.reasoningEffort) body.reasoning_effort = input.reasoningEffort;
     if (input.temperature !== undefined) body.temperature = input.temperature;
     if (input.maxTokens !== undefined) {
       body.max_tokens = input.maxTokens;
@@ -401,10 +403,14 @@ export class OpenAiCompatibleProvider implements ChatProvider {
 
       if (!response.ok) {
         const errText = await response.text();
-        const retryable = response.status === 429 || response.status >= 500;
+        const isRateLimit =
+          response.status === 429 ||
+          (response.status === 413 && errText.includes("rate_limit_exceeded"));
+        const effectiveStatus = isRateLimit ? 429 : response.status;
+        const retryable = isRateLimit || response.status >= 500;
 
         // Auto-retry 429 rate limit if wait time is reasonable (<= 12s)
-        if (response.status === 429 && attempt < maxRetries) {
+        if (isRateLimit && attempt < maxRetries) {
           let waitMs = 2500 * Math.pow(1.5, attempt);
           const retryAfterSec = response.headers.get("retry-after");
           if (retryAfterSec) {
@@ -430,7 +436,7 @@ export class OpenAiCompatibleProvider implements ChatProvider {
 
         throw new ProviderError(`upstream ${response.status}: ${errText}`, {
           retryable,
-          httpStatus: response.status,
+          httpStatus: effectiveStatus,
         });
       }
 

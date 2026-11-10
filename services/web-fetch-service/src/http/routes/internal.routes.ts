@@ -9,6 +9,7 @@ export const createInternalRoutes: RouteModule<WebFetchHttpContext> = (ctx) => {
   router.post("/internal/scrape", auth, asyncHandler(ctrl.scrape));
   router.post("/internal/crawl", auth, asyncHandler(ctrl.crawl));
   router.post("/internal/search", auth, asyncHandler(ctrl.search));
+  router.post("/internal/enrich-profile", auth, asyncHandler(ctrl.enrichProfile));
   router.get("/internal/jobs/:jobId", auth, asyncHandler(ctrl.getJob));
 
   return router;

@@ -105,7 +105,7 @@ export function createInternalSecretsController(secrets: SecretsService) {
           name: body.name ?? "",
           value: body.value ?? "",
         },
-        { actorUserId: INTERNAL_SERVICE_ACTOR_ID, requestId },
+        { actorUserId: INTERNAL_SERVICE_ACTOR_ID, serviceActor: true, requestId },
       );
       sendPlatformJson(res, 201, { request_id: requestId, secret });
     }) as RequestHandler,
@@ -117,6 +117,7 @@ export function createInternalSecretsController(secrets: SecretsService) {
       const name = routeParam(req.params.name);
       await secrets.delete(workspaceId, name, {
         actorUserId: INTERNAL_SERVICE_ACTOR_ID,
+        serviceActor: true,
         requestId,
       });
       sendPlatformJson(res, 200, { request_id: requestId, deleted: true });

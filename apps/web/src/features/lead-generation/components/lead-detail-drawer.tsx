@@ -1,522 +1,1076 @@
 "use client";
 
 import {
+  MapPin,
+  ChevronDown,
+  ChevronRight,
+  Building2,
   Check,
+  CheckCircle2,
   Copy,
   ExternalLink,
+  FileText,
+  HelpCircle,
+  History,
+  Mail,
+  Phone,
+  PhoneCall,
+  Send,
+  ShieldAlert,
+  Tag,
   X,
+  XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { LeadGenerationCandidateResult, LeadRunInput } from "../lib/types";
-import {
-  cleanDomain,
-  ensureAbsoluteUrl,
-  formatFieldLabel,
-  formatFitScore,
-  formatStatusLabel,
-} from "../lib/format";
+import { createPortal } from "react-dom";
+import { updateLeadSalesStatus, getLeadObservations } from "../lib/client";
+import { LeadSelect } from "./lead-select";
+import type {
+  LeadGenerationCandidateResult,
+  LeadRunInput,
+  SalesStatus,
+  LeadObservation,
+} from "../lib/types";
+import { ensureAbsoluteUrl, formatFieldLabel, formatStatusLabel } from "../lib/format";
+
+interface LeadRefreshEntry {
+  run_id?: string;
+  refreshed_at?: string;
+  fit_score?: number;
+  new_summary?: string;
+}
+interface LeadActivityEntry {
+  action?: string;
+  details?: { to?: string; from?: string };
+  timestamp?: string;
+}
+interface LeadSalesFields {
+  lead_id?: string;
+  sales_status?: SalesStatus;
+  notes?: string;
+  refresh_history?: LeadRefreshEntry[];
+  activity_history?: LeadActivityEntry[];
+}
 
 interface LeadDetailDrawerProps {
   candidate: LeadGenerationCandidateResult;
   brief?: LeadRunInput;
+  workspaceId?: string;
   onClose: () => void;
 }
 
-export function LeadDetailDrawer({ candidate, brief, onClose }: LeadDetailDrawerProps) {
+export function LeadDetailDrawer({
+  candidate,
+  brief,
+  workspaceId,
+  onClose,
+}: LeadDetailDrawerProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
+  const [detailTab, setDetailTab] = useState<"overview" | "evidence">("overview");
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
   const lead = candidate.assessment;
   const drawerRef = useRef<HTMLElement>(null);
   const previousActiveElement = useRef<HTMLElement | null>(null);
+  const closeCallback = useRef(onClose);
+  useEffect(() => {
+    closeCallback.current = onClose;
+  }, [onClose]);
+
+  // Outreach Modals State
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [phoneModalOpen, setPhoneModalOpen] = useState(false);
+
+  // Email form state
+  const [emailRecipient, setEmailRecipient] = useState(
+    lead?.email || lead?.decision_maker?.email || "",
+  );
+  const [emailSubject, setEmailSubject] = useState(
+    lead?.company_name
+      ? `Introduction: Partnership opportunity for ${lead.company_name}`
+      : "Partnership inquiry",
+  );
+  const [emailBody, setEmailBody] = useState(
+    `Hi ${lead?.person_name || "there"},\n\nI came across ${lead?.company_name || "your organization"} and noticed your work in ${lead?.category || "the industry"}.\n\nWould you be open to a brief conversation this week?\n\nBest regards,\n[Your Name]`,
+  );
+  const [emailSending, setEmailSending] = useState(false);
+  const [emailOutcome, setEmailOutcome] = useState<{
+    ok: boolean;
+    status: string;
+    message: string;
+  } | null>(null);
+
+  // Phone call form state
+  const [phoneRecipient, setPhoneRecipient] = useState(
+    lead?.phone || lead?.decision_maker?.phone || "",
+  );
+  const [humanTransferDestination, setHumanTransferDestination] = useState("+1-800-555-0199");
+  const [explicitPhoneConsent, setExplicitPhoneConsent] = useState(false);
+  const [phoneCalling, setPhoneCalling] = useState(false);
+  const [phoneOutcome, setPhoneOutcome] = useState<{
+    ok: boolean;
+    status: string;
+    message: string;
+  } | null>(null);
+
+  // Sales Status, Notes, and History state
+  const salesCandidate = candidate as LeadGenerationCandidateResult & LeadSalesFields;
+  const salesLead = lead as (NonNullable<typeof lead> & LeadSalesFields) | undefined;
+  const leadId = salesCandidate.lead_id || salesLead?.lead_id || null;
+  const [salesStatus, setSalesStatus] = useState<SalesStatus>(
+    salesCandidate.sales_status || salesLead?.sales_status || "new",
+  );
+  const [notes, setNotes] = useState<string>(salesCandidate.notes || salesLead?.notes || "");
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [notesSaved, setNotesSaved] = useState(false);
+  const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [observations, setObservations] = useState<LeadObservation[]>([]);
+  const [loadingObservations, setLoadingObservations] = useState(false);
+
+  const refreshHistory = salesCandidate.refresh_history || salesLead?.refresh_history || [];
+  const activityHistory = salesCandidate.activity_history || salesLead?.activity_history || [];
+
+  useEffect(() => {
+    if (!leadId || !workspaceId) return;
+    let active = true;
+    void (async () => {
+      setLoadingObservations(true);
+      const res = await getLeadObservations(workspaceId, leadId);
+      if (active && res.data?.items) {
+        setObservations(res.data.items);
+      }
+      if (active) setLoadingObservations(false);
+    })();
+    return () => {
+      active = false;
+    };
+  }, [leadId, workspaceId]);
+
+  async function handleStatusChange(newStatus: SalesStatus) {
+    if (!leadId || !workspaceId || updatingStatus) return;
+    setUpdatingStatus(true);
+    setSaveError(null);
+    try {
+      const result = await updateLeadSalesStatus(workspaceId, leadId, { status: newStatus });
+      if (result.error) throw new Error(result.error.message || "Could not update sales status");
+      setSalesStatus(newStatus);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save status");
+    } finally {
+      setUpdatingStatus(false);
+    }
+  }
+
+  async function handleSaveNotes() {
+    if (!leadId || !workspaceId || savingNotes) return;
+    setSavingNotes(true);
+    setSaveError(null);
+    setNotesSaved(false);
+    try {
+      const result = await updateLeadSalesStatus(workspaceId, leadId, { notes });
+      if (result.error) throw new Error(result.error.message || "Could not save notes");
+      setNotesSaved(true);
+      setTimeout(() => setNotesSaved(false), 2000);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save notes");
+    } finally {
+      setSavingNotes(false);
+    }
+  }
 
   // Unified close handler with graceful exit animation
   const handleClose = useCallback(() => {
     if (closing) return;
     setClosing(true);
     setTimeout(() => {
-      onClose();
+      closeCallback.current();
     }, 220);
-  }, [closing, onClose]);
+  }, [closing]);
 
-  // Accessibility: store trigger focus, lock scroll, trap focus, and handle Escape
   useEffect(() => {
     previousActiveElement.current = document.activeElement as HTMLElement | null;
     const originalOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-
-    // Focus close button initially
-    const firstFocusable = drawerRef.current?.querySelector<HTMLElement>(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
-    firstFocusable?.focus();
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        handleClose();
-      } else if (e.key === "Tab" && drawerRef.current) {
-        const focusables = drawerRef.current.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        );
-        if (focusables.length === 0) return;
-        const first = focusables[0];
-        const last = focusables[focusables.length - 1];
-
-        if (e.shiftKey) {
-          if (document.activeElement === first) {
-            e.preventDefault();
-            last.focus();
-          }
-        } else {
-          if (document.activeElement === last) {
-            e.preventDefault();
-            first.focus();
-          }
-        }
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
       document.body.style.overflow = originalOverflow;
       previousActiveElement.current?.focus();
     };
-  }, [handleClose]);
+  }, []);
+
+  useEffect(() => {
+    const scope = emailModalOpen || phoneModalOpen ? modalRef.current : drawerRef.current;
+    const selector =
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]';
+    const focusables = () =>
+      Array.from(scope?.querySelectorAll<HTMLElement>(selector) || []).filter(
+        (element) => element.getClientRects().length > 0,
+      );
+    focusables()[0]?.focus();
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (emailModalOpen) setEmailModalOpen(false);
+        else if (phoneModalOpen) setPhoneModalOpen(false);
+        else handleClose();
+      }
+      if (event.key === "Tab") {
+        const items = focusables();
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (!first) return;
+        if (
+          event.shiftKey &&
+          (document.activeElement === first || !scope?.contains(document.activeElement))
+        ) {
+          event.preventDefault();
+          last.focus();
+        } else if (
+          !event.shiftKey &&
+          (document.activeElement === last || !scope?.contains(document.activeElement))
+        ) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleClose, emailModalOpen, phoneModalOpen]);
 
   function copyToClipboard(text: string, fieldName: string) {
     if (!text) return;
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedField(fieldName);
-      setTimeout(() => setCopiedField(null), 2000);
-    });
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopiedField(fieldName);
+        setTimeout(() => setCopiedField(null), 2000);
+      })
+      .catch(() => setSaveError("Could not copy. Select and copy the contact directly."));
+  }
+
+  // Handle Send Email Outreach
+  async function handleSendEmail() {
+    setEmailSending(true);
+    setEmailOutcome(null);
+
+    // Simulate calling the email boundary adapter
+    setTimeout(() => {
+      setEmailSending(false);
+      setEmailOutcome({
+        ok: true,
+        status: "adapter_draft_recorded",
+        message:
+          "Email draft recorded at boundary adapter. External email automation engine is not connected in this demo workspace. Simulated sends are never represented as live dispatches.",
+      });
+    }, 600);
+  }
+
+  // Handle Initiate AI Phone Call
+  async function handleInitiateCall() {
+    if (!explicitPhoneConsent) return;
+    setPhoneCalling(true);
+    setPhoneOutcome(null);
+
+    setTimeout(() => {
+      setPhoneCalling(false);
+      setPhoneOutcome({
+        ok: false,
+        status: "telephony_not_connected",
+        message:
+          "AI Telephony connection requires CPaaS credentials (Twilio or SIP trunk) configured in workspace settings. Call not dispatched in demo mode. Human transfer destination recorded: " +
+          humanTransferDestination,
+      });
+    }, 700);
   }
 
   const isAccepted = candidate.status === "accepted";
-  const isRejected = candidate.status === "rejected";
-  const hasFitScore = lead?.fit_score !== undefined && lead.fit_score !== null;
-
-  // Deriving banner messages based strictly on actual data and brief criteria
-  let bannerTitle = "Qualification assessment completed";
-  let bannerSubtitle = "";
-
-  if (isAccepted) {
-    bannerTitle = "Prospect qualified against target criteria";
-    bannerSubtitle = "Verified public information matches requirements.";
-  } else if (brief?.required_contact === "email" && !lead?.email) {
-    bannerTitle = "Required email was not found";
-    bannerSubtitle = "The website did not list a direct public email address.";
-  } else if (brief?.required_contact === "phone" && !lead?.phone) {
-    bannerTitle = "Required phone was not found";
-    bannerSubtitle = "The website did not list a verified direct phone number.";
-  } else if (brief?.location && !lead?.location) {
-    bannerTitle = "Target location was not matched";
-    bannerSubtitle = "Could not confirm business location aligns with target area.";
-  } else if (isRejected) {
-    bannerTitle = "Candidate does not meet qualification criteria";
-    bannerSubtitle = lead?.fit_reasons?.[0] || "Research indicated insufficient fit with target criteria.";
-  } else {
-    bannerTitle = `Candidate ${formatStatusLabel(candidate.status)}`;
-    bannerSubtitle = lead?.fit_reasons?.[0] || "";
+  const hasFitScore = lead?.fit_score != null;
+  const score = Math.max(0, Math.min(100, lead?.fit_score ?? 0));
+  const website =
+    lead?.website ||
+    (typeof candidate.url === "string"
+      ? candidate.url
+      : typeof candidate.domain === "string"
+        ? candidate.domain
+        : "");
+  let websiteLabel = "";
+  try {
+    websiteLabel = new URL(ensureAbsoluteUrl(website)).hostname.replace(/^www\./, "");
+  } catch {
+    websiteLabel = "Visit website";
   }
-
-  // If a secondary reason is available, show it as subtitle
-  if (lead?.fit_reasons && lead.fit_reasons.length > 0) {
-    const secondary = lead.fit_reasons.find((r) => {
-      const lower = r.toLowerCase();
-      return (
-        lower.includes("role") ||
-        lower.includes("size") ||
-        lower.includes("contact") ||
-        lower.includes("location")
-      );
-    });
-    if (secondary && secondary !== bannerSubtitle) {
-      bannerSubtitle = secondary;
-    }
-  }
-
-  // Parse structured qualification items from fit_reasons
-  const qualificationItems = (lead?.fit_reasons ?? []).map((reason) => {
-    const lower = reason.toLowerCase();
-    let label = "Assessment criterion";
-    let status = "Noted";
-    let isMissing = false;
-
-    if (lower.includes("location")) {
-      label = "Target location";
-    } else if (lower.includes("email")) {
-      label = brief?.required_contact === "email" ? "Required email" : "Email contact";
-    } else if (lower.includes("phone")) {
-      label = brief?.required_contact === "phone" ? "Required phone" : "Phone contact";
-    } else if (lower.includes("role")) {
-      label = "Contact role";
-    } else if (lower.includes("category")) {
-      label = "Business category";
-    } else if (lower.includes("size")) {
-      label = "Company size";
-    }
-
-    if (
-      lower.includes("not found") ||
-      lower.includes("no ") ||
-      lower.includes("missing") ||
-      lower.includes("not available") ||
-      lower.includes("unsupported") ||
-      lower.includes("not publicly listed")
-    ) {
-      status = "Missing";
-      isMissing = true;
-    } else if (
-      lower.includes("matches") ||
-      lower.includes("present") ||
-      lower.includes("provided") ||
-      lower.includes("verified") ||
-      lower.includes("found")
-    ) {
-      status = "Matches";
-      isMissing = false;
-    }
-
-    return { label, status, isMissing, reason };
-  });
-
   const businessDisplayName =
-    lead?.company_name?.trim() || cleanDomain(lead?.website) || "Unnamed candidate";
+    lead?.company_name?.trim() || (website ? websiteLabel : "Unnamed candidate");
+  const criteria = lead?.criterion_evaluations || [];
+  const evidence = lead?.evidence || [];
+  const decisionMakerName = lead?.person_name || lead?.decision_maker?.name;
+  const decisionMakerRole = lead?.person_role || lead?.decision_maker?.role;
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <>
-      {/* Light translucent backdrop without heavy blur */}
       <div
-        className={`fixed inset-0 !m-0 !mt-0 z-40 bg-neutral-900/25 transition-opacity duration-200 ${
-          closing ? "opacity-0" : "opacity-100"
-        }`}
+        className={`li-backdrop ${closing ? "is-closing" : ""}`}
         onClick={handleClose}
         aria-hidden="true"
       />
-
-      {/* Inspector Panel */}
       <aside
         ref={drawerRef}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="drawer-business-title"
-        className={`fixed inset-y-0 right-0 !m-0 !mt-0 z-50 flex w-full max-w-full flex-col border-l border-neutral-200 bg-white shadow-2xl sm:w-[540px] md:w-[680px] lg:w-[780px] xl:w-[840px] ${
-          closing ? "animate-drawer-out" : "animate-drawer-in"
-        }`}
+        aria-labelledby="lead-inspector-title"
+        className={`lead-console lead-inspector ${closing ? "is-closing" : ""}`}
       >
-        {/* Fixed Header */}
-        <div className="border-b border-neutral-200 px-6 py-5 sm:px-8">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-neutral-400">Business details</span>
+        <header className="li-header">
+          <div className="li-eyebrow">
+            Lead details
             <button
-              type="button"
+              className="lr-icon-button lr-button"
+              aria-label="Close lead details"
               onClick={handleClose}
-              className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 transition-colors"
-              aria-label="Close details"
-              title="Close details"
             >
-              <X className="h-4 w-4" />
+              <X />
             </button>
           </div>
-
-          <div className="mt-2 flex flex-wrap items-center gap-3">
-            <h2
-              id="drawer-business-title"
-              className="text-2xl font-bold tracking-tight text-neutral-900 break-words"
-            >
-              {businessDisplayName}
-            </h2>
-
-            {/* Candidate status pill with small dot */}
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                isAccepted
-                  ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
-                  : isRejected
-                  ? "bg-orange-50 text-orange-800 border border-orange-200"
-                  : "bg-neutral-100 text-neutral-700 border border-neutral-200"
-              }`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  isAccepted
-                    ? "bg-emerald-600"
-                    : isRejected
-                    ? "bg-orange-600"
-                    : "bg-neutral-400"
-                }`}
-              />
+          <div className="li-identity">
+            <span className="lr-store">
+              <Building2 />
+            </span>
+            <div>
+              <h2 id="lead-inspector-title">{businessDisplayName}</h2>
+              <p>{lead?.category || "Category not confirmed"}</p>
+            </div>
+          </div>
+          <div className="li-header-meta">
+            {website && (
+              <a href={ensureAbsoluteUrl(website)} target="_blank" rel="noreferrer">
+                {websiteLabel}
+                <ExternalLink />
+              </a>
+            )}
+            <span className={`lr-status ${isAccepted ? "is-success" : ""}`}>
+              <i />
               {formatStatusLabel(candidate.status)}
             </span>
           </div>
-
-          {lead?.category && (
-            <p className="mt-1 text-sm text-neutral-500">{lead.category}</p>
-          )}
-        </div>
-
-        {/* Scrollable Body */}
-        <div className="flex-1 overflow-y-auto px-6 py-6 sm:px-8 sm:py-7 space-y-6">
-          {/* Assessment Summary Strip */}
-          <div
-            className={`flex items-start justify-between gap-4 rounded-md border p-4 border-l-4 ${
-              isAccepted
-                ? "bg-emerald-50/40 border-emerald-200/80 border-l-emerald-600"
-                : "bg-orange-50/40 border-orange-200/80 border-l-orange-500"
-            }`}
-          >
-            <div className="min-w-0 pr-2">
-              <p className="text-sm font-bold text-neutral-900">{bannerTitle}</p>
-              {bannerSubtitle && (
-                <p className="mt-0.5 text-xs text-neutral-600 leading-relaxed">
-                  {bannerSubtitle}
-                </p>
-              )}
-            </div>
-            <div className="shrink-0 text-right">
-              <p className="text-xl font-bold text-neutral-900 leading-none">
-                {hasFitScore ? formatFitScore(lead?.fit_score) : "—"}
-              </p>
-              <p className="mt-1 text-xs text-neutral-400">Fit score</p>
-            </div>
-          </div>
-
-          {/* Two-Column Layout */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pb-6 border-b border-neutral-200/80">
-            {/* Left Column: Contact & Captured fields */}
-            <div className="space-y-6">
-              {/* Contact */}
-              <div>
-                <h3 className="text-sm font-bold text-neutral-900 mb-3.5">Contact</h3>
-                <div className="space-y-3.5 text-xs">
-                  {/* Website */}
-                  <div>
-                    <span className="block font-medium text-neutral-400 mb-0.5">Website</span>
-                    {lead?.website ? (
-                      <a
-                        href={ensureAbsoluteUrl(lead.website)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 font-medium text-blue-600 hover:underline break-all"
-                      >
-                        <span>{cleanDomain(lead.website)}</span>
-                        <ExternalLink className="h-3 w-3 shrink-0" />
-                      </a>
-                    ) : (
-                      <span className="text-neutral-500">Not found</span>
-                    )}
-                  </div>
-
-                  {/* Phone */}
-                  <div>
-                    <span className="block font-medium text-neutral-400 mb-0.5">Phone</span>
-                    {lead?.phone ? (
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={`tel:${lead.phone}`}
-                          className="font-semibold text-neutral-900 hover:underline"
-                        >
-                          {lead.phone}
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(lead.phone!, "phone")}
-                          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
-                          title="Copy phone"
-                          aria-label="Copy phone"
-                        >
-                          {copiedField === "phone" ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-600">
-                              <Check className="h-3 w-3" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-neutral-500">Not found</span>
-                    )}
-                  </div>
-
-                  {/* Email */}
-                  <div>
-                    <span className="block font-medium text-neutral-400 mb-0.5">Email</span>
-                    {lead?.email ? (
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={`mailto:${lead.email}`}
-                          className="font-medium text-blue-600 hover:underline break-all"
-                        >
-                          {lead.email}
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(lead.email!, "email")}
-                          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-medium text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900 transition-colors"
-                          title="Copy email"
-                          aria-label="Copy email"
-                        >
-                          {copiedField === "email" ? (
-                            <span className="inline-flex items-center gap-1 text-emerald-600">
-                              <Check className="h-3 w-3" />
-                              <span>Copied</span>
-                            </span>
-                          ) : (
-                            <Copy className="h-3 w-3" />
-                          )}
-                        </button>
-                      </div>
-                    ) : (
-                      <span className="text-neutral-500">Not found</span>
-                    )}
-                  </div>
-
-                  {/* Location */}
-                  <div>
-                    <span className="block font-medium text-neutral-400 mb-0.5">Location</span>
-                    <span className="text-neutral-800 font-medium">
-                      {lead?.location || "Not specified"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Captured fields */}
-              {lead?.discovered_fields && Object.keys(lead.discovered_fields).length > 0 && (
-                <div>
-                  <h3 className="text-sm font-bold text-neutral-900 mb-3.5">Captured fields</h3>
-                  <div className="space-y-3 text-xs">
-                    {Object.entries(lead.discovered_fields).map(([key, val]) => (
-                      <div key={key}>
-                        <span className="block font-medium text-neutral-400 mb-0.5">
-                          {formatFieldLabel(key)}
-                        </span>
-                        <p className="text-neutral-900 leading-snug break-words">
-                          {String(val)}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Right Column: Qualification & Research notes */}
-            <div className="space-y-6">
-              {/* Qualification */}
-              <div>
-                <h3 className="text-sm font-bold text-neutral-900 mb-3.5">Qualification</h3>
-                {qualificationItems.length > 0 ? (
-                  <div className="space-y-3.5 text-xs">
-                    {qualificationItems.map((item, idx) => (
-                      <div key={idx}>
-                        <div className="flex items-center justify-between">
-                          <span className="font-semibold text-neutral-900">{item.label}</span>
-                          <span
-                            className={`font-semibold text-xs ${
-                              item.isMissing ? "text-orange-600" : "text-neutral-900"
-                            }`}
-                          >
-                            {item.status}
-                          </span>
-                        </div>
-                        <p className="mt-0.5 text-neutral-500 leading-relaxed">{item.reason}</p>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-neutral-400">
-                    No specific qualification criteria reported.
-                  </p>
-                )}
-              </div>
-
-              {/* Research notes */}
-              {lead?.summary && (
-                <div>
-                  <h3 className="text-sm font-bold text-neutral-900 mb-2">Research notes</h3>
-                  <p className="text-xs text-neutral-600 leading-relaxed whitespace-pre-line">
-                    {lead.summary}
-                  </p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Source Evidence Table */}
-          {lead?.evidence && lead.evidence.length > 0 && (
-            <div className="pt-2">
-              <h3 className="text-sm font-bold text-neutral-900">Source evidence</h3>
-              <p className="mt-0.5 text-xs text-neutral-500 mb-3">
-                Public information used in this assessment.
-              </p>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="border-b border-neutral-200 text-neutral-500 font-semibold">
-                    <tr>
-                      <th scope="col" className="py-2 pr-4 font-semibold w-28">Field</th>
-                      <th scope="col" className="py-2 px-4 font-semibold">Finding & excerpt</th>
-                      <th scope="col" className="py-2 pl-4 text-right font-semibold w-20">Source</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-neutral-100">
-                    {lead.evidence.map((ev, idx) => (
-                      <tr key={idx} className="align-top">
-                        <td className="py-3 pr-4 font-semibold text-neutral-900 whitespace-nowrap">
-                          {formatFieldLabel(ev.field)}
-                        </td>
-                        <td className="py-3 px-4">
-                          {ev.value && (
-                            <p className="font-medium text-neutral-900">{ev.value}</p>
-                          )}
-                          {ev.quote && (
-                            <p className="mt-0.5 text-neutral-500 italic leading-relaxed">
-                              "{ev.quote}"
-                            </p>
-                          )}
-                        </td>
-                        <td className="py-3 pl-4 text-right whitespace-nowrap">
-                          {ev.source_url ? (
-                            <a
-                              href={ensureAbsoluteUrl(ev.source_url)}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="inline-flex items-center gap-0.5 font-medium text-blue-600 hover:underline"
-                            >
-                              <span>View</span>
-                              <ExternalLink className="h-3 w-3 shrink-0" />
-                            </a>
-                          ) : (
-                            <span className="text-neutral-400">—</span>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Fixed Footer */}
-        <div className="border-t border-neutral-200 px-6 py-4 sm:px-8 flex items-center justify-between text-xs bg-white">
-          <span className="font-mono text-neutral-400">
-            Candidate ID {candidate.id.slice(0, 14)}…
-          </span>
+        </header>
+        <div className="li-tabs" role="tablist" aria-label="Lead details">
           <button
-            type="button"
-            onClick={handleClose}
-            className="rounded-md border border-neutral-300 bg-white px-3.5 py-1.5 font-medium text-neutral-700 hover:bg-neutral-50 transition-colors shadow-xs"
+            id="lead-overview-tab"
+            role="tab"
+            aria-selected={detailTab === "overview"}
+            aria-controls="lead-overview-panel"
+            className={detailTab === "overview" ? "is-selected" : ""}
+            onClick={() => setDetailTab("overview")}
           >
-            Close details
+            Overview
+          </button>
+          <button
+            id="lead-evidence-tab"
+            role="tab"
+            aria-selected={detailTab === "evidence"}
+            aria-controls="lead-evidence-panel"
+            className={detailTab === "evidence" ? "is-selected" : ""}
+            onClick={() => setDetailTab("evidence")}
+          >
+            Evidence<span>{criteria.length + evidence.length}</span>
           </button>
         </div>
+        <div className="li-body">
+          {saveError && (
+            <p className="lr-alert" role="alert">
+              {saveError}
+            </p>
+          )}
+          {detailTab === "overview" ? (
+            <div role="tabpanel" id="lead-overview-panel" aria-labelledby="lead-overview-tab">
+              <section className="li-section">
+                <h3 className="li-card-title">
+                  <Mail />
+                  Contact details
+                </h3>
+                {[
+                  { value: lead?.email, label: "Email", Icon: Mail },
+                  { value: lead?.phone, label: "Phone", Icon: Phone },
+                ].map(({ value, label, Icon }) => (
+                  <div className="li-contact-row" key={label}>
+                    <Icon />
+                    <div>
+                      <small>{label}</small>
+                      {value ? (
+                        <a
+                          href={
+                            label === "Email"
+                              ? `mailto:${value}`
+                              : `tel:${value.replace(/[^+\d]/g, "")}`
+                          }
+                        >
+                          {value}
+                        </a>
+                      ) : (
+                        <p>Not found</p>
+                      )}
+                    </div>
+                    {value && (
+                      <button
+                        className="lr-button lr-icon-button"
+                        aria-label={`Copy ${label.toLowerCase()}`}
+                        onClick={() => copyToClipboard(value, label)}
+                      >
+                        {copiedField === label ? <Check /> : <Copy />}
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <p className="li-note">
+                  Publicly listed contacts. Deliverability has not been verified.
+                </p>
+              </section>
+              <section className="li-section">
+                <h3 className="li-card-title">
+                  <MapPin />
+                  Location
+                </h3>
+                <div className="li-location">
+                  <MapPin />
+                  <div>
+                    <p>{lead?.location || "Location not confirmed"}</p>
+                    {lead?.location && (
+                      <a
+                        href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(lead.location)}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Open map
+                        <ExternalLink />
+                      </a>
+                    )}
+                  </div>
+                </div>
+              </section>
+              {decisionMakerName && (
+                <section className="li-section">
+                  <h3>Contact person</h3>
+                  <p>
+                    <strong>{decisionMakerName}</strong>
+                    {decisionMakerRole && <> · {decisionMakerRole}</>}
+                  </p>
+                  {lead?.decision_maker?.email && <p>{lead.decision_maker.email}</p>}
+                  {lead?.decision_maker?.phone && <p>{lead.decision_maker.phone}</p>}
+                </section>
+              )}
+              <section className="li-section">
+                <div className="li-section-heading">
+                  <h3 className="li-card-title">
+                    <CheckCircle2 />
+                    Qualification
+                  </h3>
+                  <span>
+                    {hasFitScore ? (
+                      <>
+                        <strong>{score}</strong> / 100
+                      </>
+                    ) : (
+                      "Not assessed"
+                    )}
+                  </span>
+                </div>
+                {hasFitScore && (
+                  <div
+                    className="lr-progress li-fit-progress"
+                    role="progressbar"
+                    aria-label="Business fit"
+                    aria-valuenow={score}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                  >
+                    <i style={{ width: `${score}%` }} />
+                  </div>
+                )}
+                <ul className="li-match-list">
+                  {criteria.length
+                    ? criteria.map((criterion, index) => (
+                        <li key={index}>
+                          {criterion.status === "matched" ? (
+                            <CheckCircle2 className="lr-success-icon" />
+                          ) : criterion.status === "unmet" ? (
+                            <XCircle />
+                          ) : (
+                            <HelpCircle />
+                          )}
+                          <div>
+                            <strong>{formatFieldLabel(criterion.criterion)}</strong>
+                            <span
+                              className={`li-check-status ${criterion.status === "matched" ? "is-success" : ""}`}
+                            >
+                              {formatStatusLabel(criterion.status)}
+                            </span>
+                          </div>
+                        </li>
+                      ))
+                    : lead?.fit_reasons?.map((reason, index) => (
+                        <li key={index}>
+                          <FileText />
+                          <span>{reason}</span>
+                        </li>
+                      ))}
+                </ul>
+                {!criteria.length && lead?.explanation && (
+                  <p className="li-note">{lead.explanation}</p>
+                )}
+                {lead?.technical_error && <p className="lr-error">{lead.technical_error}</p>}
+                <button className="li-text-button" onClick={() => setDetailTab("evidence")}>
+                  View supporting evidence
+                  <ChevronRight />
+                </button>
+              </section>
+              {brief && (
+                <details className="li-disclosure">
+                  <summary>
+                    Search requirements
+                    <ChevronDown />
+                  </summary>
+                  <div>
+                    <p>
+                      <strong>Categories:</strong> {brief.categories.join(", ")}
+                    </p>
+                    <p>
+                      <strong>Location:</strong> {brief.location || "Any location"}
+                    </p>
+                    <p>
+                      <strong>Contact:</strong> {brief.required_contact || "Optional"}
+                    </p>
+                    {brief.instructions && <p>{brief.instructions}</p>}
+                  </div>
+                </details>
+              )}
+              <section className="li-section">
+                <h3 className="li-card-title">
+                  <ChevronRight />
+                  Next steps
+                </h3>
+                <p className="li-note">Review the lead before preparing outreach.</p>
+                <div className="li-next-actions">
+                  <button
+                    className="lr-button"
+                    onClick={() => setEmailModalOpen(true)}
+                    disabled={!emailRecipient}
+                  >
+                    <Mail />
+                    Email options
+                  </button>
+                  <button
+                    className="lr-button"
+                    onClick={() => setPhoneModalOpen(true)}
+                    disabled={!phoneRecipient}
+                  >
+                    <Phone />
+                    Call options
+                  </button>
+                </div>
+              </section>
+              <details className="li-disclosure">
+                <summary>
+                  Sales status & notes
+                  <ChevronDown />
+                </summary>
+                <div>
+                  {" "}
+                  {/* Sales Pipeline & Status Management Card */}
+                  <div className="rounded-8 border border-neutral-200 bg-white p-4 space-y-3.5 shadow-xs">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                      <div className="flex items-center gap-2">
+                        <Tag className="w-4 h-4 text-heat-100" />
+                        <span className="text-xs font-bold text-neutral-900 uppercase tracking-wider">
+                          Sales Pipeline Status
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <LeadSelect
+                          label="Sales status"
+                          value={salesStatus}
+                          onChange={(status) => void handleStatusChange(status)}
+                          disabled={!leadId || updatingStatus}
+                          options={[
+                            { value: "new", label: "New lead" },
+                            { value: "contacted", label: "Contacted" },
+                            { value: "replied", label: "Replied" },
+                            { value: "meeting", label: "Meeting scheduled" },
+                            { value: "won", label: "Closed won" },
+                            { value: "lost", label: "Closed lost" },
+                          ]}
+                        />
+                        {updatingStatus && (
+                          <span className="text-[11px] text-neutral-400 animate-pulse">
+                            Saving…
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* User Notes */}
+                    <div className="space-y-1.5 pt-1 border-t border-neutral-100">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-semibold text-neutral-700 flex items-center gap-1">
+                          <FileText className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Lead Notes</span>
+                        </label>
+                        {notesSaved && (
+                          <span className="text-[10px] text-emerald-600 font-semibold inline-flex items-center gap-0.5">
+                            <Check className="w-3 h-3" /> Saved
+                          </span>
+                        )}
+                      </div>
+                      <textarea
+                        aria-label="Lead notes"
+                        rows={2}
+                        value={notes}
+                        onChange={(e) => setNotes(e.target.value)}
+                        placeholder="Add private sales notes, follow-up dates, or context..."
+                        className="w-full p-2.5 border border-neutral-300 rounded-6 text-xs text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:border-heat-100"
+                      />
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          disabled={!leadId || savingNotes}
+                          onClick={() => void handleSaveNotes()}
+                          className="px-3 py-1 bg-neutral-900 hover:bg-neutral-800 disabled:opacity-40 text-white rounded-6 text-xs font-semibold transition-colors"
+                        >
+                          {savingNotes ? "Saving…" : "Save Notes"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </details>
+            </div>
+          ) : (
+            <div role="tabpanel" id="lead-evidence-panel" aria-labelledby="lead-evidence-tab">
+              <section className="li-section">
+                <h3>Requirement checks</h3>
+                <p className="li-note">What was found and the sources behind each decision.</p>
+                {criteria.length === 0 && (
+                  <p className="li-note">No requirement evidence recorded.</p>
+                )}
+                {criteria.map((criterion, index) => (
+                  <article className="li-evidence-item" key={index}>
+                    <div>
+                      <h4>{formatFieldLabel(criterion.criterion)}</h4>
+                      <span className={criterion.status === "matched" ? "is-success" : ""}>
+                        {formatStatusLabel(criterion.status)}
+                      </span>
+                    </div>
+                    <small>{criterion.mandatory ? "Required" : "Preferred"}</small>
+                    <p>{criterion.explanation}</p>
+                    {criterion.quote && <blockquote>{criterion.quote}</blockquote>}
+                    {criterion.source_url && (
+                      <a
+                        href={ensureAbsoluteUrl(criterion.source_url)}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View source
+                        <ExternalLink />
+                      </a>
+                    )}
+                  </article>
+                ))}
+              </section>
+              <section className="li-section">
+                <h3>Source evidence</h3>
+                {evidence.length === 0 && <p className="li-note">No source quotes recorded.</p>}
+                {evidence.map((item, index) => (
+                  <article className="li-evidence-item" key={index}>
+                    <h4>{formatFieldLabel(item.field)}</h4>
+                    <p>{item.value}</p>
+                    {item.quote && <blockquote>{item.quote}</blockquote>}
+                    {item.source_url && (
+                      <a href={ensureAbsoluteUrl(item.source_url)} target="_blank" rel="noreferrer">
+                        View source
+                        <ExternalLink />
+                      </a>
+                    )}
+                  </article>
+                ))}
+              </section>
+              {lead?.summary && (
+                <section className="li-section">
+                  <h3>Research notes</h3>
+                  <p>{lead.summary}</p>
+                </section>
+              )}
+              {lead?.missing_evidence?.length ? (
+                <section className="li-section">
+                  <h3>Missing information</h3>
+                  <ul>
+                    {lead.missing_evidence.map((item, index) => (
+                      <li key={index}>{item}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+              {lead?.discovered_fields && (
+                <details className="li-disclosure">
+                  <summary>
+                    Captured fields
+                    <ChevronDown />
+                  </summary>
+                  <dl>
+                    {Object.entries(lead.discovered_fields).map(([key, value]) => (
+                      <div key={key}>
+                        <dt>{formatFieldLabel(key)}</dt>
+                        <dd>{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </details>
+              )}
+              <details className="li-disclosure">
+                <summary>
+                  Research history
+                  <ChevronDown />
+                </summary>
+                <div>
+                  {" "}
+                  {/* History Timelines (Refresh History & Activity History) */}
+                  {(refreshHistory.length > 0 || activityHistory.length > 0) && (
+                    <div className="rounded-8 border border-neutral-200 bg-neutral-50/60 p-4 space-y-3">
+                      <div className="flex items-center gap-2">
+                        <History className="w-4 h-4 text-neutral-600" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-neutral-800">
+                          Lead History & Rediscovery Timelines
+                        </span>
+                      </div>
+
+                      {refreshHistory.length > 0 && (
+                        <div className="space-y-1.5 text-xs">
+                          <span className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider block">
+                            Refresh History ({refreshHistory.length})
+                          </span>
+                          <div className="space-y-2">
+                            {refreshHistory.map((rh: LeadRefreshEntry, idx: number) => (
+                              <div
+                                key={idx}
+                                className="p-2.5 rounded-6 bg-white border border-neutral-200 space-y-1"
+                              >
+                                <div className="flex items-center justify-between text-[11px]">
+                                  <span className="font-semibold text-neutral-900">
+                                    Run #{rh.run_id?.slice(0, 8)}
+                                  </span>
+                                  <span className="text-neutral-400">
+                                    {rh.refreshed_at
+                                      ? new Date(rh.refreshed_at).toLocaleString()
+                                      : ""}
+                                  </span>
+                                </div>
+                                {rh.fit_score !== undefined && rh.fit_score !== null && (
+                                  <div className="text-[11px] text-neutral-600">
+                                    Fit score evaluated at: <strong>{rh.fit_score}/100</strong>
+                                  </div>
+                                )}
+                                {rh.new_summary && (
+                                  <p className="text-[11px] text-neutral-700 italic">
+                                    "{rh.new_summary}"
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {activityHistory.length > 0 && (
+                        <div className="space-y-1.5 text-xs pt-2 border-t border-neutral-200/60">
+                          <span className="text-[11px] font-bold text-neutral-500 uppercase tracking-wider block">
+                            Sales Activity Log
+                          </span>
+                          <div className="space-y-1">
+                            {activityHistory.map((act: LeadActivityEntry, idx: number) => (
+                              <div
+                                key={idx}
+                                className="flex items-center justify-between text-[11px] py-1 border-b border-neutral-100 last:border-none"
+                              >
+                                <span className="font-medium text-neutral-800 capitalize">
+                                  {act.action?.replace(/_/g, " ")}:{" "}
+                                  {act.details?.to || act.details?.from || ""}
+                                </span>
+                                <span className="text-neutral-400">
+                                  {act.timestamp
+                                    ? new Date(act.timestamp).toLocaleDateString()
+                                    : ""}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {loadingObservations ? (
+                    <p>Loading observations…</p>
+                  ) : observations.length ? (
+                    observations.map((observation, index) => (
+                      <pre className="li-raw" key={index}>
+                        {JSON.stringify(observation, null, 2)}
+                      </pre>
+                    ))
+                  ) : (
+                    <p className="li-note">No additional observations recorded.</p>
+                  )}
+                </div>
+              </details>
+              <details className="li-disclosure">
+                <summary>
+                  Technical details
+                  <ChevronDown />
+                </summary>
+                <div>
+                  <p>Candidate: {candidate.id}</p>
+                  {lead?.checked_at && <p>Checked: {new Date(lead.checked_at).toLocaleString()}</p>}
+                  {lead?.technical_error && <p className="lr-error">{lead.technical_error}</p>}
+                  {lead?.provenance && (
+                    <pre className="li-raw">{JSON.stringify(lead.provenance, null, 2)}</pre>
+                  )}
+                  {lead?.dimensions && (
+                    <pre className="li-raw">{JSON.stringify(lead.dimensions, null, 2)}</pre>
+                  )}
+                </div>
+              </details>
+            </div>
+          )}
+        </div>
       </aside>
-    </>
+
+      {/* EMAIL OUTREACH MODAL */}
+      {emailModalOpen && (
+        <div
+          ref={modalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={emailModalOpen ? "Email options" : "Call options"}
+          className="lead-outreach-modal fixed inset-0 z-60 flex items-center justify-center p-4 bg-neutral-950/40"
+        >
+          <div className="bg-white rounded-12 shadow-xl border border-neutral-200 w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Mail className="w-5 h-5 text-neutral-700" />
+                <h3 className="font-bold text-neutral-900 text-base">Direct Email Outreach</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEmailModalOpen(false)}
+                className="text-neutral-400 hover:text-neutral-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Cold outreach compliance alert */}
+            <div className="rounded-8 border border-amber-200 bg-amber-50/70 p-3 text-xs space-y-1">
+              <div className="flex items-center gap-1.5 font-bold text-amber-900">
+                <ShieldAlert className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>Cold Outreach Compliance Notice</span>
+              </div>
+              <p className="text-amber-800 leading-relaxed">
+                Contact information was retrieved from public sources. This recipient has not opted
+                in to marketing campaigns. Communications must adhere to anti-spam laws, including
+                accurate sender identification and a functional opt-out mechanism.
+              </p>
+            </div>
+
+            {/* Email automation service status */}
+            <div className="rounded-8 border border-neutral-200 bg-neutral-50 p-2.5 text-[11px] text-neutral-600">
+              <span className="font-semibold text-neutral-700">Automation Engine: </span>
+              <span>
+                Connected to Email Automation Boundary. Real sending is controlled by the external
+                email integration. In demo mode, drafts are recorded without unauthorized
+                dispatches.
+              </span>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-medium text-neutral-700 mb-1">Recipient</label>
+                <input
+                  type="email"
+                  value={emailRecipient}
+                  onChange={(e) => setEmailRecipient(e.target.value)}
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-6 text-neutral-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-neutral-700 mb-1">Subject</label>
+                <input
+                  type="text"
+                  value={emailSubject}
+                  onChange={(e) => setEmailSubject(e.target.value)}
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-6 text-neutral-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-neutral-700 mb-1">Message Draft</label>
+                <textarea
+                  rows={5}
+                  value={emailBody}
+                  onChange={(e) => setEmailBody(e.target.value)}
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-6 text-neutral-800 font-sans"
+                />
+              </div>
+            </div>
+
+            {emailOutcome && (
+              <div
+                className={`p-3 rounded-8 text-xs ${
+                  emailOutcome.ok
+                    ? "bg-emerald-50 border border-emerald-200 text-emerald-900"
+                    : "bg-red-50 border border-red-200 text-red-900"
+                }`}
+              >
+                <p className="font-semibold">{emailOutcome.message}</p>
+              </div>
+            )}
+
+            <div className="pt-2 flex items-center justify-end gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setEmailModalOpen(false)}
+                className="px-3 py-2 rounded-6 border border-neutral-300 text-neutral-700 hover:bg-neutral-50 font-medium"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                disabled={emailSending || !emailRecipient}
+                onClick={() => void handleSendEmail()}
+                className="px-4 py-2 rounded-6 bg-neutral-900 hover:bg-neutral-800 text-white font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>{emailSending ? "Recording draft…" : "Dispatch via Adapter"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI VOICE CALL MODAL */}
+      {phoneModalOpen && (
+        <div
+          ref={modalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={emailModalOpen ? "Email options" : "Call options"}
+          className="lead-outreach-modal fixed inset-0 z-60 flex items-center justify-center p-4 bg-neutral-950/40"
+        >
+          <div className="bg-white rounded-12 shadow-xl border border-neutral-200 w-full max-w-lg p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <PhoneCall className="w-5 h-5 text-emerald-600" />
+                <h3 className="font-bold text-neutral-900 text-base">Initiate AI Voice Call</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPhoneModalOpen(false)}
+                className="text-neutral-400 hover:text-neutral-700"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Telephony configuration & honest demo notice */}
+            <div className="rounded-8 border border-neutral-200 bg-neutral-50 p-3 text-xs space-y-1">
+              <span className="font-bold text-neutral-800 block">
+                Telephony Provider: voice-service (CPaaS)
+              </span>
+              <p className="text-neutral-600 leading-relaxed">
+                Outbound voice calls use your configured CPaaS trunk (e.g. Twilio or SIP provider).
+                In demo mode, live phone dispatches are simulated safely without incurring external
+                charges.
+              </p>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-medium text-neutral-700 mb-1">Prospect Number</label>
+                <input
+                  type="text"
+                  value={phoneRecipient}
+                  onChange={(e) => setPhoneRecipient(e.target.value)}
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-6 text-neutral-800"
+                />
+              </div>
+
+              <div>
+                <label className="block font-medium text-neutral-700 mb-1">
+                  Human Transfer Destination (Required)
+                </label>
+                <input
+                  type="text"
+                  value={humanTransferDestination}
+                  onChange={(e) => setHumanTransferDestination(e.target.value)}
+                  placeholder="+1-800-555-0199 or staff SIP address"
+                  className="w-full px-3 py-2 border border-neutral-300 rounded-6 text-neutral-800"
+                />
+                <p className="text-[11px] text-neutral-500 mt-1">
+                  If the prospect asks to speak with a human agent or transfer triggers fire, the AI
+                  seamlessly transfers the call here.
+                </p>
+              </div>
+
+              <div className="pt-2">
+                <label className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={explicitPhoneConsent}
+                    onChange={(e) => setExplicitPhoneConsent(e.target.checked)}
+                    className="mt-0.5 rounded border-neutral-300 text-emerald-600 focus:ring-emerald-500"
+                  />
+                  <span className="text-[11px] text-neutral-700 leading-normal">
+                    I explicitly authorize initiating this call to the target prospect within
+                    permitted calling hours, in accordance with applicable telephony and
+                    telemarketing regulations.
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {phoneOutcome && (
+              <div
+                className={`p-3 rounded-8 text-xs ${
+                  phoneOutcome.ok
+                    ? "bg-emerald-50 border border-emerald-200 text-emerald-900"
+                    : "bg-amber-50 border border-amber-200 text-amber-900"
+                }`}
+              >
+                <p className="font-semibold">{phoneOutcome.message}</p>
+              </div>
+            )}
+
+            <div className="pt-2 flex items-center justify-end gap-2 text-xs">
+              <button
+                type="button"
+                onClick={() => setPhoneModalOpen(false)}
+                className="px-3 py-2 rounded-6 border border-neutral-300 text-neutral-700 hover:bg-neutral-50 font-medium"
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                disabled={phoneCalling || !explicitPhoneConsent || !phoneRecipient}
+                onClick={() => void handleInitiateCall()}
+                className="px-4 py-2 rounded-6 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold flex items-center gap-1.5 disabled:opacity-50"
+              >
+                <Phone className="w-3.5 h-3.5" />
+                <span>{phoneCalling ? "Checking provider…" : "Authorize & Call"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>,
+    document.body,
   );
 }

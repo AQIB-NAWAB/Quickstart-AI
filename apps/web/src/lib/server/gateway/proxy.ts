@@ -1,3 +1,4 @@
+import { refreshSingleFlight } from "../auth/refresh-single-flight";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { COOKIE_ACCESS, COOKIE_REFRESH } from "../auth/constants";
@@ -15,10 +16,10 @@ async function tryRefreshToken(): Promise<string | null> {
     const refreshToken = jar.get(COOKIE_REFRESH)?.value;
     if (!refreshToken) return null;
 
-    const refreshed = await gatewayFetch<TokenPair>("/v1/refresh", {
+    const refreshed = await refreshSingleFlight(refreshToken, () => gatewayFetch<TokenPair>("/v1/refresh", {
       method: "POST",
       body: JSON.stringify({ refresh_token: refreshToken }),
-    });
+    }));
 
     if (!refreshed.ok || !refreshed.data?.access_token) return null;
 
@@ -90,12 +91,13 @@ export async function proxyToGateway<T>(
   return { ok: true, data: result.data, status: result.status };
 }
 
-export async function proxyBinaryToGateway(path: string, range?: string | null): Promise<NextResponse> {
+export async function proxyBinaryToGateway(path: string, range?: string | null, method: "GET" | "POST" = "GET"): Promise<NextResponse> {
   let token = await getAccessTokenFromCookies();
   if (!token || accessTokenNeedsRefresh(token, 30)) token = (await tryRefreshToken()) ?? token;
   if (!token) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Not signed in" } }, { status: 401 });
 
   const send = (accessToken: string) => fetch(`${gatewayBaseUrl()}${path}`, {
+    method,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       ...(range ? { Range: range } : {}),

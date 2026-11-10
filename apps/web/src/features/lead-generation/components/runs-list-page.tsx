@@ -2,11 +2,16 @@
 
 import {
   AlertTriangle,
+  FileText,
+  Users,
+  Play,
+  ChevronLeft,
   Building2,
   ChevronRight,
   Plus,
   RefreshCw,
   Search,
+  Webhook,
 } from "lucide-react";
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
@@ -15,6 +20,7 @@ import { FeatureDialog } from "@/features/knowledge/components/feature-dialog";
 import { listRuns } from "../lib/client";
 import { formatResearchTarget } from "../lib/format";
 import type { LeadGenerationRunSummary } from "../lib/types";
+import { LeadSelect } from "./lead-select";
 import { LeadGenerationNewRunPage } from "./new-run-page";
 
 function CreateQueryOpener({ onOpen }: { onOpen: () => void }) {
@@ -69,8 +75,8 @@ function renderRunStatusBadge(status: string) {
 
   if (norm === "running") {
     return (
-      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-900 border border-blue-200/80">
-        <span className="w-1.5 h-1.5 rounded-full bg-blue-600 animate-pulse shrink-0" />
+      <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-orange-50 text-neutral-800 border border-orange-200/80">
+        <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shrink-0" />
         <span>Running</span>
       </span>
     );
@@ -109,9 +115,14 @@ export function LeadGenerationRunsListPage({ workspaceId }: { workspaceId: strin
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [search, setSearch] = useState("");
-  const [tabFilter, setTabFilter] = useState<"all" | "active" | "completed" | "errors">("all");
+  const [tabFilter, setTabFilter] = useState<
+    "all" | "active" | "completed" | "errors" | "cancelled"
+  >("all");
   const [statusDropdown, setStatusDropdown] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [sort, setSort] = useState("newest");
+  const [pageSize, setPageSize] = useState("8");
+  const [page, setPage] = useState(1);
 
   const openCreate = useCallback(() => setCreateOpen(true), []);
 
@@ -136,7 +147,7 @@ export function LeadGenerationRunsListPage({ workspaceId }: { workspaceId: strin
       setLoading(false);
       setRefreshing(false);
     },
-    [workspaceId]
+    [workspaceId],
   );
 
   useEffect(() => {
@@ -149,7 +160,7 @@ export function LeadGenerationRunsListPage({ workspaceId }: { workspaceId: strin
     const acceptedLeads = runs.reduce((sum, r) => sum + Number(r.accepted ?? 0), 0);
     const activeRuns = runs.filter((r) => r.status === "queued" || r.status === "running").length;
     const runsWithErrors = runs.filter(
-      (r) => r.status === "completed_with_errors" || r.status === "failed"
+      (r) => r.status === "completed_with_errors" || r.status === "failed",
     ).length;
     const completedClean = runs.filter((r) => r.status === "completed").length;
     return { total, acceptedLeads, activeRuns, runsWithErrors, completedClean };
@@ -184,6 +195,8 @@ export function LeadGenerationRunsListPage({ workspaceId }: { workspaceId: strin
         return false;
       }
 
+      if (tabFilter === "cancelled" && run.status !== "cancelled") return false;
+
       // Dropdown status filter
       if (statusDropdown !== "all" && run.status !== statusDropdown) {
         return false;
@@ -198,309 +211,316 @@ export function LeadGenerationRunsListPage({ workspaceId }: { workspaceId: strin
     });
   }, [runs, tabFilter, statusDropdown, search]);
 
+  const sortedRuns = [...filteredRuns].sort((a, b) => {
+    const time = (run: LeadGenerationRunSummary) => Date.parse(run.created_at || "") || 0;
+    return sort === "oldest"
+      ? time(a) - time(b)
+      : sort === "accepted"
+        ? Number(b.accepted || 0) - Number(a.accepted || 0)
+        : time(b) - time(a);
+  });
+  const size = Number(pageSize);
+  const totalPages = Math.max(1, Math.ceil(sortedRuns.length / size));
+  const currentPage = Math.min(page, totalPages);
+  const offset = (currentPage - 1) * size;
+  const visibleRuns = sortedRuns.slice(offset, offset + size);
+
   return (
-    <div className="lead-console lead-runs space-y-5">
-      <Suspense fallback={null}><CreateQueryOpener onOpen={openCreate} /></Suspense>
-
-      {/* Header matching 3.png */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+    <div className="lead-console lead-runs lead-runs-redesign">
+      <Suspense fallback={null}>
+        <CreateQueryOpener onOpen={openCreate} />
+      </Suspense>
+      <header className="runs-header">
         <div>
-          <h1 className="text-3xl font-bold text-neutral-900 tracking-tight">Lead generation</h1>
+          <h1>Lead generation</h1>
+          <p>Find and review leads for your business.</p>
         </div>
-
-        {/* Action Buttons: Business profile (outlined) + New run (orange) */}
-        <div className="flex items-center gap-3 self-start sm:self-auto shrink-0">
-          <Link
-            href={`/workspaces/${workspaceId}/lead-generation/profile`}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-8 text-xs font-semibold border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-800 shadow-xs transition-colors"
-          >
-            <Building2 className="w-4 h-4 text-neutral-600" />
-            <span>Business profile</span>
+        <div className="runs-actions">
+          <Link className="lr-button" href={`/workspaces/${workspaceId}/lead-generation/profile`}>
+            <Building2 />
+            Business profile
           </Link>
-
-          <button
-            type="button"
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-8 text-xs font-semibold bg-heat-100 hover:bg-orange-600 text-white shadow-xs transition-colors"
+          <Link
+            className="lr-button"
+            href={`/workspaces/${workspaceId}/lead-generation/connectors`}
           >
-            <Plus className="w-4 h-4" />
-            <span>New run</span>
+            <Webhook />
+            Inbound connectors
+          </Link>
+          <button className="lr-button lr-primary" onClick={openCreate}>
+            <Plus />
+            New run
           </button>
         </div>
-      </div>
-
+      </header>
       {error && (
-        <div className="rounded-8 border border-red-200 bg-red-50 p-3 text-xs font-medium text-red-800">
+        <div className="lr-alert" role="alert">
           {error}
         </div>
       )}
-
-      {/* Summary Band: Unframed horizontal strip, thin top/bottom rules, 4 columns with subtle vertical separators */}
-      <div className="border-y border-neutral-200 bg-white py-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 divide-y sm:divide-y-0 sm:divide-x divide-neutral-200">
-          {/* 1. Total runs */}
-          <div className="px-5 py-2 sm:py-0">
-            <span className="text-xs font-medium text-neutral-500 block">Total runs</span>
-            <div className="text-3xl font-bold text-neutral-900 tracking-tight mt-1.5 tabular-nums">
-              {metrics.total}
+      <section className="runs-metrics" aria-label="Research summary">
+        {[
+          { label: "Total runs", value: metrics.total, Icon: FileText },
+          { label: "Accepted leads", value: metrics.acceptedLeads, Icon: Users },
+          { label: "Active runs", value: metrics.activeRuns, Icon: Play },
+          { label: "Runs with errors", value: metrics.runsWithErrors, Icon: AlertTriangle },
+        ].map(({ label, value, Icon }) => (
+          <div key={label}>
+            <Icon />
+            <div>
+              <span>{label}</span>
+              <strong>{loading ? "—" : value}</strong>
             </div>
           </div>
-
-          {/* 2. Accepted leads */}
-          <div className="px-5 py-2 sm:py-0">
-            <span className="text-xs font-medium text-neutral-500 block">Accepted leads</span>
-            <div className="flex items-center gap-2 text-3xl font-bold text-neutral-900 tracking-tight mt-1.5 tabular-nums">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-              <span>{metrics.acceptedLeads}</span>
-            </div>
-          </div>
-
-          {/* 3. Active runs */}
-          <div className="px-5 py-2 sm:py-0">
-            <span className="text-xs font-medium text-neutral-500 block">Active runs</span>
-            <div className="text-3xl font-bold text-neutral-900 tracking-tight mt-1.5 tabular-nums">
-              {metrics.activeRuns}
-            </div>
-          </div>
-
-          {/* 4. Runs with errors */}
-          <div className="px-5 py-2 sm:py-0">
-            <span className="text-xs font-medium text-neutral-500 block">Runs with errors</span>
-            <div className="flex items-center gap-2 text-3xl font-bold text-neutral-900 tracking-tight mt-1.5 tabular-nums">
-              {metrics.runsWithErrors > 0 && (
-                <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0" />
-              )}
-              <span>{metrics.runsWithErrors}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Filter Tabs matching 3.png */}
-      <div className="flex items-center gap-6 border-b border-neutral-200 overflow-x-auto text-xs no-scrollbar">
+        ))}
+      </section>
+      <div className="lr-tabs runs-tabs" role="tablist" aria-label="Run outcomes">
         {(
           [
             { id: "all", label: "All runs", count: tabCounts.all },
             { id: "active", label: "Active", count: tabCounts.active },
             { id: "completed", label: "Completed", count: tabCounts.completed },
             { id: "errors", label: "With errors", count: tabCounts.errors },
+            {
+              id: "cancelled",
+              label: "Cancelled",
+              count: runs.filter((run) => run.status === "cancelled").length,
+            },
           ] as const
-        ).map((tab) => {
-          const isActive = tabFilter === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setTabFilter(tab.id)}
-              className={`pb-3 inline-flex items-center gap-1.5 whitespace-nowrap transition-colors border-b-2 font-medium ${
-                isActive
-                  ? "border-heat-100 text-heat-100 font-semibold -mb-[1px]"
-                  : "border-transparent text-neutral-600 hover:text-neutral-900"
-              }`}
-            >
-              <span>{tab.label}</span>
-              <span
-                className={`tabular-nums text-[11px] ${
-                  isActive ? "text-heat-100 font-bold" : "text-neutral-400 font-normal"
-                }`}
-              >
-                {tab.count}
-              </span>
-            </button>
-          );
-        })}
+        ).map((tab) => (
+          <button
+            role="tab"
+            aria-selected={tabFilter === tab.id}
+            className={tabFilter === tab.id ? "is-selected" : ""}
+            key={tab.id}
+            onClick={() => {
+              setTabFilter(tab.id);
+              setPage(1);
+            }}
+          >
+            {tab.label}
+            <span>{tab.count}</span>
+          </button>
+        ))}
       </div>
-
-      {/* Toolbar: Search input, Status dropdown, Refresh icon on far right */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
-        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 flex-1">
-          {/* Search Input: ~360-420px */}
-          <div className="relative w-full sm:max-w-[420px]">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none" />
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search categories, location, or run ID..."
-              className="w-full h-11 pl-10 pr-3 border border-neutral-300 rounded-8 bg-white focus:outline-none focus:border-heat-100 focus:ring-1 focus:ring-heat-100 text-neutral-800 placeholder:text-neutral-400 transition-colors"
-            />
-          </div>
-
-          {/* Status Dropdown */}
-          <div className="flex items-center">
-            <select
-              value={statusDropdown}
-              onChange={(e) => setStatusDropdown(e.target.value)}
-              className="h-11 px-3 border border-neutral-300 rounded-8 bg-white text-neutral-700 focus:outline-none focus:border-heat-100 focus:ring-1 focus:ring-heat-100 transition-colors font-medium cursor-pointer"
-              aria-label="Filter by status"
-            >
-              <option value="all">Status</option>
-              <option value="queued">Queued</option>
-              <option value="running">Running</option>
-              <option value="completed">Completed</option>
-              <option value="completed_with_errors">Completed with errors</option>
-              <option value="failed">Failed</option>
-              <option value="cancelled">Cancelled</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Refresh button at far right */}
+      <div className="runs-toolbar">
+        <label className="lr-search">
+          <Search />
+          <input
+            aria-label="Search runs"
+            placeholder="Search categories, location, or run ID…"
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+        <LeadSelect
+          label="Status"
+          value={statusDropdown}
+          onChange={(value) => {
+            setStatusDropdown(value);
+            setPage(1);
+          }}
+          options={[
+            { value: "all", label: "All statuses" },
+            { value: "queued", label: "Queued" },
+            { value: "running", label: "Running" },
+            { value: "completed", label: "Completed" },
+            { value: "completed_with_errors", label: "Completed with errors" },
+            { value: "failed", label: "Failed" },
+            { value: "cancelled", label: "Cancelled" },
+          ]}
+        />
+        <LeadSelect
+          label="Sort"
+          value={sort}
+          onChange={(value) => {
+            setSort(value);
+            setPage(1);
+          }}
+          options={[
+            { value: "newest", label: "Newest first" },
+            { value: "oldest", label: "Oldest first" },
+            { value: "accepted", label: "Most accepted" },
+          ]}
+        />
         <button
-          type="button"
-          onClick={() => void loadData(true)}
-          disabled={loading || refreshing}
-          className="h-11 w-11 inline-flex items-center justify-center rounded-8 border border-neutral-300 bg-white hover:bg-neutral-50 text-neutral-600 transition-colors shadow-xs shrink-0 self-end sm:self-auto"
+          className="lr-button lr-icon-button"
           aria-label="Refresh runs"
-          title="Refresh runs"
+          disabled={loading || refreshing}
+          onClick={() => void loadData(true)}
         >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin text-heat-100" : ""}`} />
+          <RefreshCw className={refreshing ? "animate-spin" : ""} />
         </button>
       </div>
-
-      {loading && !refreshing && (
-        <p role="status" className="text-xs text-neutral-500">
+      {loading && (
+        <p role="status" className="runs-loading">
           Loading runs…
         </p>
       )}
-
-      {/* Table matching 3.png */}
-      <div className="lead-data-table bg-white border border-neutral-200 rounded-8 overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-neutral-200 bg-neutral-50/80 text-neutral-600 font-semibold">
-                <th className="py-3 px-4 font-semibold min-w-[220px]">Research target</th>
-                <th className="py-3 px-4 font-semibold min-w-[130px]">Location</th>
-                <th className="py-3 px-4 font-semibold min-w-[180px]">Status</th>
-                <th className="py-3 px-4 font-semibold min-w-[150px]">Accepted / target</th>
-                <th className="py-3 px-4 font-semibold min-w-[130px]">Created</th>
-                <th className="py-3 px-3 w-[44px] text-right font-normal" aria-label="Actions" />
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 text-neutral-700">
-              {filteredRuns.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="py-12 text-center text-neutral-400 italic">
-                    No research runs found.
+      <div className="runs-table-wrap">
+        <table className="runs-table">
+          <colgroup>
+            <col style={{ width: "28%" }} />
+            <col style={{ width: "15%" }} />
+            <col style={{ width: "23%" }} />
+            <col style={{ width: "16%" }} />
+            <col style={{ width: "14%" }} />
+            <col style={{ width: "4%" }} />
+          </colgroup>
+          <thead>
+            <tr>
+              <th>Research target</th>
+              <th>Location</th>
+              <th>Status</th>
+              <th>Leads found</th>
+              <th>Created</th>
+              <th>
+                <span className="sr-only">Open run</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleRuns.map((run) => {
+              const target = Number(run.brief?.target_count || 0),
+                accepted = Number(run.accepted || 0);
+              const progress = target > 0 ? Math.min(100, (accepted / target) * 100) : 0;
+              const created = formatRunCreatedDate(run.created_at);
+              const href = `/workspaces/${workspaceId}/lead-generation/runs/${run.id}`;
+              return (
+                <tr
+                  key={run.id}
+                  onClick={(event) => {
+                    if (!(event.target as HTMLElement).closest("a,button")) router.push(href);
+                  }}
+                >
+                  <td>
+                    <div className="runs-target">
+                      <span className="lr-store">
+                        <Building2 />
+                      </span>
+                      <div>
+                        <Link href={href}>{formatResearchTarget(run.brief?.categories || [])}</Link>
+                        <small>#{run.id.slice(0, 8)}</small>
+                      </div>
+                    </div>
+                  </td>
+                  <td data-label="Location">{run.brief?.location || "Any location"}</td>
+                  <td data-label="Status">{renderRunStatusBadge(run.status)}</td>
+                  <td data-label="Leads found">
+                    <div className="runs-attainment">
+                      <span>
+                        <strong>{accepted}</strong> / {target || "—"}
+                      </span>
+                      <div
+                        className="lr-progress"
+                        role="progressbar"
+                        aria-label="Lead target progress"
+                        aria-valuenow={Math.round(progress)}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                      >
+                        <i style={{ width: `${progress}%` }} />
+                      </div>
+                    </div>
+                  </td>
+                  <td data-label="Created">
+                    <span>{created.date}</span>
+                    <small className="runs-time">{created.time}</small>
+                  </td>
+                  <td>
+                    <Link
+                      className="runs-open"
+                      href={href}
+                      aria-label={`Open ${formatResearchTarget(run.brief?.categories || [])} run`}
+                    >
+                      <ChevronRight />
+                    </Link>
                   </td>
                 </tr>
-              ) : (
-                filteredRuns.map((run) => {
-                  const categories = run.brief?.categories ?? [];
-                  const primaryTarget = formatResearchTarget(categories);
-                  const secondaryCategories =
-                    categories.length > 2 ? categories.slice(2).join(", ") : null;
-                  const shortId = `#${run.id.slice(0, 8)}`;
-                  const location = run.brief?.location || "—";
-                  const accepted = Number(run.accepted ?? 0);
-                  const target = Number(run.brief?.target_count ?? 0);
-                  const attainmentRatio = target > 0 ? Math.min(100, (accepted / target) * 100) : 0;
-                  const created = formatRunCreatedDate(run.created_at);
-
-                  return (
-                    <tr
-                      key={run.id}
-                      onClick={() =>
-                        router.push(`/workspaces/${workspaceId}/lead-generation/runs/${run.id}`)
-                      }
-                      tabIndex={0}
-                      role="button"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
-                          router.push(`/workspaces/${workspaceId}/lead-generation/runs/${run.id}`);
-                        }
-                      }}
-                      className="hover:bg-neutral-50/80 transition-colors cursor-pointer select-none outline-none"
-                    >
-                      {/* 1. Research target */}
-                      <td className="py-3.5 px-4">
-                        <div className="space-y-0.5">
-                          <p className="font-bold text-neutral-900 leading-tight">
-                            {primaryTarget}
-                          </p>
-                          <p className="text-[12px] text-neutral-500 font-sans">
-                            {secondaryCategories ? `${secondaryCategories} · ` : ""}
-                            <span className="font-mono text-neutral-400">{shortId}</span>
-                          </p>
-                        </div>
-                      </td>
-
-                      {/* 2. Location */}
-                      <td className="py-3.5 px-4 text-neutral-700 font-medium">
-                        {location}
-                      </td>
-
-                      {/* 3. Status */}
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        {renderRunStatusBadge(run.status)}
-                      </td>
-
-                      {/* 4. Accepted / target with orange attainment bar */}
-                      <td className="py-3.5 px-4">
-                        <div className="space-y-1.5 w-32">
-                          <div className="text-xs font-semibold text-neutral-900 tabular-nums">
-                            <span>{accepted}</span>
-                            <span className="text-neutral-400 font-normal"> / {target > 0 ? target : "—"}</span>
-                          </div>
-                          <div
-                            className="w-full h-1.5 rounded-full bg-neutral-200 overflow-hidden"
-                            role="progressbar"
-                            aria-valuenow={accepted}
-                            aria-valuemin={0}
-                            aria-valuemax={target}
-                            aria-label={`Accepted ${accepted} of ${target}`}
-                          >
-                            <div
-                              className="h-full bg-heat-100 rounded-full transition-all duration-300"
-                              style={{ width: `${attainmentRatio}%` }}
-                            />
-                          </div>
-                        </div>
-                      </td>
-
-                      {/* 5. Created (date above time) */}
-                      <td className="py-3.5 px-4 text-neutral-600 font-sans text-xs whitespace-nowrap">
-                        <div className="space-y-0.5 leading-tight">
-                          <p className="text-neutral-700 font-medium">{created.date}</p>
-                          <p className="text-[11px] text-neutral-400">{created.time}</p>
-                        </div>
-                      </td>
-
-                      {/* 6. Chevron right */}
-                      <td className="py-3.5 px-3 text-right">
-                        <ChevronRight className="w-4 h-4 text-neutral-400 inline-block" />
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Table Footer */}
-        <div className="px-4 py-3 bg-white border-t border-neutral-200 text-xs text-neutral-500">
-          {runs.length} {runs.length === 1 ? "run" : "runs"}
-        </div>
+              );
+            })}
+          </tbody>
+        </table>
+        {!loading && visibleRuns.length === 0 && (
+          <div className="lr-empty">
+            <Search />
+            <strong>No research runs found</strong>
+            <p>
+              {runs.length
+                ? "Try another search or status filter."
+                : "Create your first run to start finding leads."}
+            </p>
+            {runs.length > 0 && (
+              <button
+                className="lr-button"
+                onClick={() => {
+                  setSearch("");
+                  setStatusDropdown("all");
+                  setTabFilter("all");
+                  setPage(1);
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        )}
+        <footer className="runs-pagination">
+          <span>
+            {sortedRuns.length
+              ? `Showing ${offset + 1}–${Math.min(offset + size, sortedRuns.length)} of ${sortedRuns.length} runs`
+              : "0 runs"}
+          </span>
+          <div>
+            <LeadSelect
+              label="Rows"
+              value={pageSize}
+              onChange={(value) => {
+                setPageSize(value);
+                setPage(1);
+              }}
+              options={[
+                { value: "8", label: "8" },
+                { value: "16", label: "16" },
+                { value: "32", label: "32" },
+              ]}
+            />
+            <button
+              className="lr-button lr-icon-button"
+              aria-label="Previous page"
+              disabled={currentPage === 1}
+              onClick={() => setPage(currentPage - 1)}
+            >
+              <ChevronLeft />
+            </button>
+            <span className="runs-page-label">
+              {currentPage} / {totalPages}
+            </span>
+            <button
+              className="lr-button lr-icon-button"
+              aria-label="Next page"
+              disabled={currentPage === totalPages}
+              onClick={() => setPage(currentPage + 1)}
+            >
+              <ChevronRight />
+            </button>
+          </div>
+        </footer>
       </div>
-
-      {/* New Research Run Modal (FeatureDialog) */}
       <FeatureDialog
         open={createOpen}
         onClose={closeCreate}
         title="New research run"
-        maxWidthClass="max-w-[850px]"
-        roundedClass="rounded-8"
+        description="Define your search, set requirements, then review."
+        maxWidthClass="max-w-[1080px]"
+        roundedClass="rounded-12"
         backdropClass="bg-black/25"
         layout="lead-wizard"
       >
-        <LeadGenerationNewRunPage
-          workspaceId={workspaceId}
-          embedded
-          onCancel={closeCreate}
-        />
+        <LeadGenerationNewRunPage workspaceId={workspaceId} embedded onCancel={closeCreate} />
       </FeatureDialog>
     </div>
   );
