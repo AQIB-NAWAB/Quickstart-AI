@@ -1,4 +1,4 @@
-.PHONY: up down logs ps smoke playground integrity identity-migrate workspace-migrate agent-migrate conversation-migrate web-fetch-migrate knowledge-migrate knowledge-smoke memory-migrate secrets-migrate workflow-migrate campaign-migrate lead-migrate eval-migrate data-plane-up data-plane-down data-plane-logs data-plane-smoke
+.PHONY: up down logs ps smoke playground integrity identity-migrate workspace-migrate agent-migrate conversation-migrate web-fetch-migrate knowledge-migrate knowledge-smoke memory-migrate secrets-migrate workflow-migrate campaign-migrate lead-migrate eval-migrate data-plane-up data-plane-down data-plane-logs data-plane-smoke sip-config sip-up sip-down sip-logs sip-check
 
 COMPOSE = docker compose
 
@@ -96,3 +96,19 @@ ps:
 lead-generation-migrate:
 	pnpm --filter @quickstart/service-lead-generation build
 	pnpm --filter @quickstart/service-lead-generation migrate
+
+sip-config:
+	@chmod +x deploy/sip/render-config.sh
+	@deploy/sip/render-config.sh
+
+sip-up: sip-config
+	$(COMPOSE) -f deploy/sip/docker-compose.yml up -d --wait
+
+sip-down:
+	$(COMPOSE) -f deploy/sip/docker-compose.yml down
+
+sip-logs:
+	$(COMPOSE) -f deploy/sip/docker-compose.yml logs -f
+
+sip-check:
+	@node scripts/check-sip-stack.mjs $${SIP_HOST:-127.0.0.1}

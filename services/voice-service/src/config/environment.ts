@@ -1,5 +1,7 @@
+import type { SipTransport } from "@quickstart/contracts";
 import type { SpeechProfile } from "../speech/factory.js";
 import { resolveTelephonyProfile, type TelephonyProfile } from "../telephony/factory.js";
+import { parseList, parseSipTransports } from "../telephony/sip-edge.js";
 
 export type VoiceConfig = {
   port: number;
@@ -79,6 +81,11 @@ export type VoiceConfig = {
   livekitApiSecret?: string;
   livekitSipEndpoint?: string;
   livekitBridgeEnabled: boolean;
+  sipPublicPort: number;
+  sipTlsPort?: number;
+  sipTransports: SipTransport[];
+  sipRtpPortRange?: string;
+  sipPublicIps: string[];
   voicePublicBaseUrl: string;
   requireRealTelephony: boolean;
   /** Fire-and-forget ledger ingest (Feature 26). */
@@ -228,6 +235,7 @@ export function loadVoiceConfig(): VoiceConfig {
       process.env.TELEPHONY_PROFILE,
       Boolean(twilioAccountSid && twilioAuthToken),
       Boolean(telnyxApiKey && telnyxPublicKey && livekitConfigured),
+      livekitConfigured,
     ),
     twilioAccountSid,
     twilioAuthToken,
@@ -244,6 +252,11 @@ export function loadVoiceConfig(): VoiceConfig {
     livekitSipEndpoint,
     livekitBridgeEnabled:
       process.env.LIVEKIT_BRIDGE_ENABLED === "0" ? false : livekitConfigured,
+    sipPublicPort: Number(process.env.SIP_PUBLIC_PORT ?? 5060) || 5060,
+    sipTlsPort: process.env.SIP_TLS_PORT ? Number(process.env.SIP_TLS_PORT) : undefined,
+    sipTransports: parseSipTransports(process.env.SIP_TRANSPORTS),
+    sipRtpPortRange: process.env.SIP_RTP_PORT_RANGE?.trim() || "10000-20000",
+    sipPublicIps: parseList(process.env.SIP_PUBLIC_IPS),
     voicePublicBaseUrl,
     requireRealTelephony: process.env.TELEPHONY_REQUIRE_REAL === "1",
     usageUrl: (process.env.USAGE_URL ?? process.env.USAGE_SERVICE_URL ?? "http://127.0.0.1:3017").replace(

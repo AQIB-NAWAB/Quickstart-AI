@@ -40,6 +40,8 @@ import { createInboundCallsController } from "./controllers/inbound-calls.contro
 import { createHttpConversationClient } from "./clients/conversation.client.js";
 import type { InboundCallBridge } from "./livekit/types.js";
 import { PhoneNumbersService } from "./services/phone-numbers.service.js";
+import { buildInboundSetup } from "./services/inbound-setup.service.js";
+import { buildSipEdge, detectSipMode } from "./telephony/sip-edge.js";
 import { createSipProvisioner } from "./telephony/livekit/sip-provisioner.js";
 import { setupTwilioMediaStreamServer } from "./telephony/media-stream-server.js";
 import { createHttpServer, SERVICE_NAME } from "./http/create-server.js";
@@ -211,12 +213,21 @@ export async function startVoiceServer(): Promise<{
     sipEndpoint: config.livekitSipEndpoint,
     logger,
   });
+  const sipEdge = buildSipEdge({
+    sipEndpoint: config.livekitSipEndpoint,
+    port: config.sipPublicPort,
+    tlsPort: config.sipTlsPort,
+    transports: config.sipTransports,
+    rtpPortRange: config.sipRtpPortRange,
+    serverIps: config.sipPublicIps,
+  });
   const phoneNumbers = new PhoneNumbersService({
     repo: phoneNumbersRepo,
     telnyx: telnyxClient,
     provisioner: sipProvisioner,
     connectionName: config.telnyxSipConnectionName,
     configuredConnectionId: config.telnyxSipConnectionId,
+    sipEdge,
     logger,
   });
   const conversations = createHttpConversationClient(
@@ -358,6 +369,21 @@ export async function startVoiceServer(): Promise<{
     onCacheDegraded: (detail) => logger.warn("membership.cache_degraded", { detail }),
   });
 
+  const inboundMode = detectSipMode(config.livekitSipEndpoint, sipProvisioner.configured);
+  const inboundSetup = {
+    build: () =>
+      buildInboundSetup({
+        mode: inboundMode,
+        provisioner: sipProvisioner,
+        edge: sipEdge,
+        publicBaseUrl: config.voicePublicBaseUrl,
+        bridgeEnabled: config.livekitBridgeEnabled,
+        bridgeActive: Boolean(inboundBridge),
+        speechPipelineReady: Boolean(widgetVoiceLive || widgetVoice),
+        purchaseAvailable: telnyxClient.kind === "telnyx",
+      }),
+  };
+
   const app = createHttpServer({
     logger,
     requestTimeoutMs: Math.max(config.httpRequestTimeoutMs, 120_000),
@@ -377,6 +403,8 @@ export async function startVoiceServer(): Promise<{
     campaignsCtrl: createCampaignsController(campaigns),
     phoneNumbersCtrl: createPhoneNumbersController(phoneNumbers, {
       providerConfigured: telnyxClient.kind === "telnyx",
+      purchaseAvailable: telnyxClient.kind === "telnyx",
+      inboundSetup,
     }),
     inboundCallsCtrl,
     telephonyCtrl: createTelephonyController(telephony, {

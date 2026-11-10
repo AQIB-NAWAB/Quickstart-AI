@@ -31,6 +31,7 @@ Staff UI runs in `apps/web` (Next.js). Domain logic lives in `services/*`; share
 - **ADRs:** [docs/adr/](docs/adr/)
 - **Lead generation:** [services/lead-generation-service/README.md](services/lead-generation-service/README.md), [docs/lead-generation.md](docs/lead-generation.md)
 - **Gateway & APIs:** [docs/api/README.md](docs/api/README.md)
+- **Inbound Calling & SIP Server:** [deploy/sip/README.md](deploy/sip/README.md), [deploy/sip/BYO-SIP.md](deploy/sip/BYO-SIP.md), [docs/runbooks/inbound-calling.md](docs/runbooks/inbound-calling.md)
 
 ## Repository layout
 

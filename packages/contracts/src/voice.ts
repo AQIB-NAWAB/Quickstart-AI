@@ -9,7 +9,7 @@ export type CallDirection = (typeof CALL_DIRECTIONS)[number];
 export const CALL_STATES = ["ringing", "live", "completed", "failed", "transferred"] as const;
 export type CallState = (typeof CALL_STATES)[number];
 
-export const TELEPHONY_PROVIDER_IDS = ["twilio", "telnyx", "sip", "fake"] as const;
+export const TELEPHONY_PROVIDER_IDS = ["twilio", "telnyx", "sip", "byo_sip", "fake"] as const;
 export type TelephonyProviderId = (typeof TELEPHONY_PROVIDER_IDS)[number];
 
 /** Default spoken path: STT → runtime → TTS. */
@@ -134,6 +134,11 @@ export type WorkspacePhoneNumber = {
   released_at: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Present for bring-your-own-SIP numbers (`provider: "byo_sip"`). Never contains the
+   * trunk password; that is returned exactly once when it is generated or rotated.
+   */
+  sip?: ByoSipSummary | null;
 };
 
 export type AvailablePhoneNumber = {
@@ -180,6 +185,96 @@ export type PhoneNumberSearchResult = {
   configured: boolean;
   numbers: AvailablePhoneNumber[];
   pool: WorkspacePhoneNumber[];
+};
+
+/** Provider id stored on numbers that arrive over a customer-managed SIP trunk. */
+export const BYO_SIP_PROVIDER_ID = "byo_sip" as const;
+
+export const SIP_TRANSPORTS = ["udp", "tcp", "tls"] as const;
+export type SipTransport = (typeof SIP_TRANSPORTS)[number];
+
+/** Where the SIP/media edge runs: LiveKit Cloud, a self-hosted livekit-sip, or nowhere yet. */
+export const SIP_INBOUND_MODES = ["livekit_cloud", "self_hosted", "not_configured"] as const;
+export type SipInboundMode = (typeof SIP_INBOUND_MODES)[number];
+
+export type ByoSipSummary = {
+  allowed_addresses: string[];
+  auth_username: string | null;
+  has_credentials: boolean;
+};
+
+/**
+ * Register a number that is delivered by your own SIP server, PBX, or carrier trunk.
+ * A trunk must be locked down by source address, SIP credentials, or both. An open
+ * trunk would let anyone on the internet place calls into your workspace.
+ */
+export type ByoSipNumberInput = {
+  e164: string;
+  agent_id?: string | null;
+  friendly_name?: string | null;
+  /** Source IPs or CIDRs your SIP server sends from (IPv4 /16+ or IPv6 /48+). */
+  allowed_addresses?: string[];
+  /** SIP digest username. Generated when `generate_credentials` is true and this is empty. */
+  auth_username?: string | null;
+  generate_credentials?: boolean;
+};
+
+export type ByoSipAccessUpdate = {
+  allowed_addresses?: string[];
+};
+
+/** What an operator types into their PBX or carrier portal to deliver calls to us. */
+export type SipConnectionInfo = {
+  host: string | null;
+  port: number;
+  tls_port: number | null;
+  transports: SipTransport[];
+  /** Example Request-URI / origination URI, e.g. `sip:+14155550123@sip.example.com:5060`. */
+  sip_uri: string;
+  /** Number formats the trunk accepts in the To / Request-URI user part. */
+  accepted_number_formats: string[];
+  allowed_addresses: string[];
+  auth_username: string | null;
+  /** Only present in the response that generated or rotated the password. */
+  auth_password?: string;
+  codecs: string[];
+  dtmf: "rfc2833";
+  rtp_port_range: string | null;
+  /** Public IPs of the SIP edge, for carrier-side firewalls and ACLs. */
+  server_ips: string[];
+};
+
+export type ByoSipNumberResult = {
+  number: WorkspacePhoneNumber;
+  connection: SipConnectionInfo;
+};
+
+export type SipSetupCheckStatus = "ok" | "warn" | "error";
+
+export type SipSetupCheck = {
+  id: string;
+  label: string;
+  status: SipSetupCheckStatus;
+  detail: string;
+};
+
+/** Operator-facing readiness report for the inbound calling stack. */
+export type InboundSetupInfo = {
+  mode: SipInboundMode;
+  /** True when a real LiveKit SIP edge is wired (not the local fake). */
+  configured: boolean;
+  /** Buying numbers from the platform carrier account is enabled. */
+  purchase_available: boolean;
+  /** Registering your own SIP trunk is enabled. */
+  byo_sip_available: boolean;
+  /** All blocking checks pass; inbound calls can be answered. */
+  ready: boolean;
+  connection: Omit<SipConnectionInfo, "sip_uri" | "accepted_number_formats" | "allowed_addresses" | "auth_username" | "auth_password">;
+  webhooks: {
+    livekit: string;
+    telnyx: string;
+  };
+  checks: SipSetupCheck[];
 };
 
 export function isVoiceMode(value: unknown): value is VoiceMode {

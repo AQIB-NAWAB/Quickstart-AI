@@ -57,6 +57,7 @@ test("purchase orders, provisions LiveKit, and resolves inbound routing", async 
     agentId: "agent-1",
     e164: "+14155550123",
     roomPrefix: inboundRoomPrefix(number.id),
+    provider: "telnyx",
   });
 
   const stored = await repo.getById(number.id);

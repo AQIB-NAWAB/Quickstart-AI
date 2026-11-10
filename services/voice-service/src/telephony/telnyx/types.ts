@@ -49,7 +49,7 @@ export type TelnyxFqdn = {
 };
 
 export interface TelnyxNumbersClient {
-  readonly kind: "telnyx" | "fake";
+  readonly kind: "telnyx" | "fake" | "disabled";
   searchAvailableNumbers(input: TelnyxSearchNumbersInput): Promise<AvailablePhoneNumber[]>;
   listOwnedNumbers(): Promise<TelnyxOwnedNumber[]>;
   createNumberOrder(

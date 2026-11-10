@@ -1,0 +1,4 @@
+# Secrets and generated files. Regenerate with ./render-config.sh.
+.env
+config/*.yaml
+certs/
