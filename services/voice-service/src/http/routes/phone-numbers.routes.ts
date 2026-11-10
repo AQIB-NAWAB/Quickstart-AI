@@ -5,7 +5,7 @@ import type { VoiceHttpContext } from "../context.js";
 
 /**
  * Workspace number inventory: search Telnyx, purchase/claim, assign an agent,
- * and release back to the platform pool or the carrier.
+ * register bring-your-own SIP numbers, view connection info, and release numbers.
  */
 export const createPhoneNumbersRoutes: RouteModule<VoiceHttpContext> = (ctx) => {
   const router = createServiceRouter();
@@ -17,6 +17,12 @@ export const createPhoneNumbersRoutes: RouteModule<VoiceHttpContext> = (ctx) => 
     WORKSPACE_PERMISSIONS.VOICE_NUMBERS_MANAGE,
   );
 
+  router.get(
+    "/v1/workspaces/:workspaceId/voice/sip/setup",
+    ...tenant,
+    read,
+    asyncHandler(phoneNumbersCtrl.setup),
+  );
   router.get(
     "/v1/workspaces/:workspaceId/voice/numbers",
     ...tenant,
@@ -34,6 +40,24 @@ export const createPhoneNumbersRoutes: RouteModule<VoiceHttpContext> = (ctx) => 
     ...tenant,
     manage,
     asyncHandler(phoneNumbersCtrl.purchase),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/voice/numbers/byo",
+    ...tenant,
+    manage,
+    asyncHandler(phoneNumbersCtrl.registerByo),
+  );
+  router.get(
+    "/v1/workspaces/:workspaceId/voice/numbers/:numberId/sip",
+    ...tenant,
+    read,
+    asyncHandler(phoneNumbersCtrl.getSipConnection),
+  );
+  router.post(
+    "/v1/workspaces/:workspaceId/voice/numbers/:numberId/sip/rotate-credentials",
+    ...tenant,
+    manage,
+    asyncHandler(phoneNumbersCtrl.rotateCredentials),
   );
   router.patch(
     "/v1/workspaces/:workspaceId/voice/numbers/:numberId",

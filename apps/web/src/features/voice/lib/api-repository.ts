@@ -1,13 +1,21 @@
 import type {
   AvailablePhoneNumber,
+  ByoSipNumberInput,
+  ByoSipNumberResult,
+  ByoSipSummary,
   CallLogFilters,
   InboundCall,
   InboundCallDetail,
+  InboundSetupInfo,
   PhoneNumberSearchFilters,
   PhoneNumberStatus,
   PhoneNumberType,
   RepositoryResult,
   SimulatedInboundCallResult,
+  SipConnectionInfo,
+  SipInboundMode,
+  SipSetupCheck,
+  SipTransport,
   UpdatePhoneNumberInput,
   WorkspacePhoneNumber,
   VoiceRepository,
@@ -43,6 +51,90 @@ async function requestJson<T>(
   }
 }
 
+function mapStringList(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function mapSipSummary(value: unknown): ByoSipSummary | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  return {
+    allowed_addresses: mapStringList(raw.allowed_addresses),
+    auth_username: raw.auth_username == null ? null : String(raw.auth_username),
+    has_credentials: Boolean(raw.has_credentials),
+  };
+}
+
+function mapSipConnection(raw: Record<string, unknown>): SipConnectionInfo {
+  const transports = mapStringList(raw.transports).filter(
+    (item): item is SipTransport => item === "udp" || item === "tcp" || item === "tls",
+  );
+  return {
+    host: raw.host == null ? null : String(raw.host),
+    port: Number(raw.port ?? 5060),
+    tls_port: raw.tls_port == null ? null : Number(raw.tls_port),
+    transports,
+    sip_uri: String(raw.sip_uri ?? ""),
+    accepted_number_formats: mapStringList(raw.accepted_number_formats),
+    allowed_addresses: mapStringList(raw.allowed_addresses),
+    auth_username: raw.auth_username == null ? null : String(raw.auth_username),
+    ...(typeof raw.auth_password === "string" && raw.auth_password
+      ? { auth_password: raw.auth_password }
+      : {}),
+    codecs: mapStringList(raw.codecs),
+    dtmf: String(raw.dtmf ?? "rfc2833"),
+    rtp_port_range: raw.rtp_port_range == null ? null : String(raw.rtp_port_range),
+    server_ips: mapStringList(raw.server_ips),
+  };
+}
+
+function mapSetupInfo(raw: Record<string, unknown>): InboundSetupInfo {
+  const mode: SipInboundMode =
+    raw.mode === "livekit_cloud" || raw.mode === "self_hosted" ? raw.mode : "not_configured";
+  const connection = mapSipConnection(
+    raw.connection && typeof raw.connection === "object"
+      ? (raw.connection as Record<string, unknown>)
+      : {},
+  );
+  const webhooks =
+    raw.webhooks && typeof raw.webhooks === "object"
+      ? (raw.webhooks as Record<string, unknown>)
+      : {};
+  const checks: SipSetupCheck[] = Array.isArray(raw.checks)
+    ? (raw.checks as Record<string, unknown>[]).map((check, index) => ({
+        id: String(check.id ?? index),
+        label: String(check.label ?? check.id ?? "Check"),
+        status: check.status === "ok" || check.status === "error" ? check.status : "warn",
+        detail: String(check.detail ?? ""),
+      }))
+    : [];
+  return {
+    request_id: raw.request_id == null ? undefined : String(raw.request_id),
+    mode,
+    configured: Boolean(raw.configured),
+    purchase_available: raw.purchase_available !== false,
+    byo_sip_available: raw.byo_sip_available !== false,
+    ready: Boolean(raw.ready),
+    connection: {
+      host: connection.host,
+      port: connection.port,
+      tls_port: connection.tls_port,
+      transports: connection.transports,
+      codecs: connection.codecs,
+      dtmf: connection.dtmf,
+      rtp_port_range: connection.rtp_port_range,
+      server_ips: connection.server_ips,
+    },
+    webhooks: {
+      livekit: String(webhooks.livekit ?? ""),
+      telnyx: String(webhooks.telnyx ?? ""),
+    },
+    checks,
+  };
+}
+
 function mapPhoneNumber(raw: Record<string, unknown>): WorkspacePhoneNumber {
   const capabilities =
     raw.capabilities && typeof raw.capabilities === "object"
@@ -75,6 +167,7 @@ function mapPhoneNumber(raw: Record<string, unknown>): WorkspacePhoneNumber {
     released_at: raw.released_at == null ? null : String(raw.released_at),
     created_at: String(raw.created_at ?? new Date().toISOString()),
     updated_at: String(raw.updated_at ?? new Date().toISOString()),
+    sip: mapSipSummary(raw.sip),
   };
 }
 
@@ -400,6 +493,8 @@ export class ApiVoiceRepository implements VoiceRepository {
       status: "ready",
       data: {
         configured: Boolean(result.data.configured),
+        purchase_available: result.data.purchase_available !== false,
+        byo_sip_available: result.data.byo_sip_available !== false,
         numbers: mapNumberList(result.data),
         pool: mapPool(result.data),
       },
@@ -499,7 +594,131 @@ export class ApiVoiceRepository implements VoiceRepository {
     );
     if (result.status !== "ready") return result;
     if (!result.data.number) {
-      return { status: "error", message: "Phone number release returned no number." };
+      // Removing a bring-your-own SIP number deletes the row, so the backend may return no number.
+      const now = new Date().toISOString();
+      return {
+        status: "ready",
+        data: mapPhoneNumber({
+          id: numberId,
+          status: "released",
+          inbound_status: "released",
+          released_at: now,
+        }),
+      };
+    }
+    return { status: "ready", data: mapPhoneNumber(result.data.number) };
+  }
+
+  async getInboundSetup(
+    workspaceId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<InboundSetupInfo>> {
+    const result = await requestJson<Record<string, unknown>>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/sip/setup`,
+      undefined,
+      signal,
+    );
+    if (result.status !== "ready") return result;
+    return { status: "ready", data: mapSetupInfo(result.data) };
+  }
+
+  async registerByoSipNumber(
+    workspaceId: string,
+    input: ByoSipNumberInput,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<ByoSipNumberResult>> {
+    const result = await requestJson<{
+      number?: Record<string, unknown>;
+      connection?: Record<string, unknown>;
+    }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/numbers/byo`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      signal,
+    );
+    if (result.status !== "ready") return result;
+    if (!result.data.number || !result.data.connection) {
+      return { status: "error", message: "SIP trunk registration returned no connection details." };
+    }
+    return {
+      status: "ready",
+      data: {
+        number: mapPhoneNumber(result.data.number),
+        connection: mapSipConnection(result.data.connection),
+      },
+    };
+  }
+
+  async getSipConnection(
+    workspaceId: string,
+    numberId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<SipConnectionInfo>> {
+    const result = await requestJson<{ connection?: Record<string, unknown> }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/numbers/${encodeURIComponent(
+        numberId,
+      )}/sip`,
+      undefined,
+      signal,
+    );
+    if (result.status !== "ready") return result;
+    if (!result.data.connection) {
+      return { status: "error", message: "SIP connection details are not available." };
+    }
+    return { status: "ready", data: mapSipConnection(result.data.connection) };
+  }
+
+  async rotateSipCredentials(
+    workspaceId: string,
+    numberId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<ByoSipNumberResult>> {
+    const result = await requestJson<{
+      number?: Record<string, unknown>;
+      connection?: Record<string, unknown>;
+    }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/numbers/${encodeURIComponent(
+        numberId,
+      )}/sip/rotate-credentials`,
+      { method: "POST" },
+      signal,
+    );
+    if (result.status !== "ready") return result;
+    if (!result.data.number || !result.data.connection) {
+      return { status: "error", message: "Credential rotation returned no connection details." };
+    }
+    return {
+      status: "ready",
+      data: {
+        number: mapPhoneNumber(result.data.number),
+        connection: mapSipConnection(result.data.connection),
+      },
+    };
+  }
+
+  async updateSipAccess(
+    workspaceId: string,
+    numberId: string,
+    allowedAddresses: string[],
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<WorkspacePhoneNumber>> {
+    const result = await requestJson<{ number?: Record<string, unknown> }>(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/voice/numbers/${encodeURIComponent(
+        numberId,
+      )}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ allowed_addresses: allowedAddresses }),
+      },
+      signal,
+    );
+    if (result.status !== "ready") return result;
+    if (!result.data.number) {
+      return { status: "error", message: "Allowed address update returned no number." };
     }
     return { status: "ready", data: mapPhoneNumber(result.data.number) };
   }

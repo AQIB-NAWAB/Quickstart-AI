@@ -120,6 +120,77 @@ export interface WorkspacePhoneNumber {
   released_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Present for `provider === "byo_sip"` numbers (customer-managed SIP trunk). */
+  sip?: ByoSipSummary | null;
+}
+
+export type SipTransport = "udp" | "tcp" | "tls";
+
+export type SipInboundMode = "livekit_cloud" | "self_hosted" | "not_configured";
+
+export interface ByoSipSummary {
+  allowed_addresses: string[];
+  auth_username: string | null;
+  has_credentials: boolean;
+}
+
+/** Register a number delivered by the operator's own SIP server, PBX, or carrier trunk. */
+export interface ByoSipNumberInput {
+  e164: string;
+  agent_id?: string | null;
+  friendly_name?: string | null;
+  /** Source IPs or CIDRs the SIP server sends from. */
+  allowed_addresses?: string[];
+  auth_username?: string | null;
+  generate_credentials?: boolean;
+}
+
+/** What an operator types into their PBX or carrier portal to deliver calls to us. */
+export interface SipConnectionInfo {
+  host: string | null;
+  port: number;
+  tls_port: number | null;
+  transports: SipTransport[];
+  sip_uri: string;
+  accepted_number_formats: string[];
+  allowed_addresses: string[];
+  auth_username: string | null;
+  /** Only present in the response that generated or rotated the password. */
+  auth_password?: string;
+  codecs: string[];
+  dtmf: string;
+  rtp_port_range: string | null;
+  server_ips: string[];
+}
+
+export interface ByoSipNumberResult {
+  number: WorkspacePhoneNumber;
+  connection: SipConnectionInfo;
+}
+
+export type SipSetupCheckStatus = "ok" | "warn" | "error";
+
+export interface SipSetupCheck {
+  id: string;
+  label: string;
+  status: SipSetupCheckStatus;
+  detail: string;
+}
+
+/** Operator-facing readiness report for the inbound calling stack. */
+export interface InboundSetupInfo {
+  request_id?: string;
+  mode: SipInboundMode;
+  configured: boolean;
+  purchase_available: boolean;
+  byo_sip_available: boolean;
+  ready: boolean;
+  connection: Omit<
+    SipConnectionInfo,
+    "sip_uri" | "accepted_number_formats" | "allowed_addresses" | "auth_username" | "auth_password"
+  >;
+  webhooks: { livekit: string; telnyx: string };
+  checks: SipSetupCheck[];
 }
 
 export interface AvailablePhoneNumber {
@@ -148,6 +219,10 @@ export interface PhoneNumberSearchFilters {
 
 export interface PhoneNumbersSnapshot {
   configured: boolean;
+  /** Platform can buy numbers via Telnyx. Defaults to true when the backend omits it. */
+  purchase_available: boolean;
+  /** Bring-your-own SIP trunks are enabled. Defaults to true when the backend omits it. */
+  byo_sip_available: boolean;
   numbers: WorkspacePhoneNumber[];
   pool: WorkspacePhoneNumber[];
 }
@@ -270,6 +345,36 @@ export interface VoiceRepository {
     workspaceId: string,
     numberId: string,
     mode: "pool" | "provider",
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<WorkspacePhoneNumber>>;
+
+  getInboundSetup(
+    workspaceId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<InboundSetupInfo>>;
+
+  registerByoSipNumber(
+    workspaceId: string,
+    input: ByoSipNumberInput,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<ByoSipNumberResult>>;
+
+  getSipConnection(
+    workspaceId: string,
+    numberId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<SipConnectionInfo>>;
+
+  rotateSipCredentials(
+    workspaceId: string,
+    numberId: string,
+    signal?: AbortSignal,
+  ): Promise<RepositoryResult<ByoSipNumberResult>>;
+
+  updateSipAccess(
+    workspaceId: string,
+    numberId: string,
+    allowedAddresses: string[],
     signal?: AbortSignal,
   ): Promise<RepositoryResult<WorkspacePhoneNumber>>;
 }

@@ -20,6 +20,7 @@
     "check": "pnpm run integrity && pnpm run lint && pnpm run build && pnpm run typecheck && pnpm run test",
     "seed:demo": "node --env-file=.env scripts/seed-demo-account.mjs",
     "stack:up": "bash scripts/start-local-stack.sh",
+    "migrate": "make migrate-all",
     "widget:test:prepare": "node scripts/prepare-widget-test.mjs",
     "widget:test:serve": "python3 -m http.server 8080 --bind 127.0.0.1 --directory fixtures/widget-test",
     "widget:real-llm": "node --env-file=.env scripts/configure-demo-agent-real-llm.mjs",

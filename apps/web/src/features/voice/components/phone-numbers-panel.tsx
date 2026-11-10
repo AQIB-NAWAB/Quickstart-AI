@@ -7,7 +7,11 @@ import {
   CheckCircle2,
   DollarSign,
   Loader2,
+  KeyRound,
+  Pencil,
   Phone,
+  Plug,
+  PlugZap,
   Plus,
   Radio,
   RotateCcw,
@@ -15,20 +19,27 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { listAgents } from "@/features/agents/lib/client";
 import type { Agent } from "@/features/agents/lib/types";
 import { getVoiceRepository } from "../lib/repository";
+import { parseAddressList, validateAddressList } from "../lib/sip-validation";
 import type {
   AvailablePhoneNumber,
+  InboundSetupInfo,
   PhoneNumberSearchFilters,
   PhoneNumberStatus,
   PhoneNumberType,
   PhoneNumbersSnapshot,
   RepositoryResult,
+  SipConnectionInfo,
   VoiceRepository,
   WorkspacePhoneNumber,
 } from "../lib/types";
+import { ByoSipDialog } from "./byo-sip-dialog";
+import { InboundReadinessPanel } from "./inbound-readiness-panel";
+import { SipConnectionDetails } from "./sip-connection-details";
+import { SipModal } from "./sip-modal";
 import { VoiceSubnav } from "./voice-subnav";
 
 interface PhoneNumbersPanelProps {
@@ -88,6 +99,23 @@ function formatCost(number: WorkspacePhoneNumber | AvailablePhoneNumber): string
   return `${currency} ${cost.toFixed(2)}/mo`;
 }
 
+function isByoSip(number: WorkspacePhoneNumber): boolean {
+  return number.provider === "byo_sip";
+}
+
+function headerChipText(snapshot: PhoneNumbersSnapshot | null, setup: InboundSetupInfo | null): string {
+  const purchase = snapshot?.purchase_available ?? setup?.purchase_available ?? true;
+  const byo = snapshot?.byo_sip_available ?? setup?.byo_sip_available ?? true;
+  const edge =
+    setup?.mode === "self_hosted"
+      ? "Self-hosted SIP"
+      : setup?.mode === "livekit_cloud"
+        ? "LiveKit Cloud SIP"
+        : "LiveKit SIP";
+  const sources = [purchase ? "Telnyx" : null, byo ? "Your SIP trunk" : null].filter(Boolean);
+  return `${sources.length > 0 ? sources.join(" + ") : "No number source"} → ${edge}`;
+}
+
 function formatLocation(number: WorkspacePhoneNumber | AvailablePhoneNumber): string {
   const parts = [number.locality, number.region].filter(Boolean);
   return parts.length > 0 ? parts.join(", ") : (number.country_code ?? "—");
@@ -107,6 +135,17 @@ export function PhoneNumbersPanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const [setup, setSetup] = useState<InboundSetupInfo | null>(null);
+  const [byoOpen, setByoOpen] = useState(false);
+  const [sipView, setSipView] = useState<{
+    number: WorkspacePhoneNumber;
+    connection: SipConnectionInfo | null;
+    error: string | null;
+  } | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
 
   const [buyOpen, setBuyOpen] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -146,6 +185,8 @@ export function PhoneNumbersPanel({
     return map;
   }, [agents]);
 
+  const purchaseAvailable = snapshot?.purchase_available !== false;
+  const byoAvailable = snapshot?.byo_sip_available !== false;
   const numbers = snapshot?.numbers ?? [];
   const pool = snapshot?.pool ?? [];
   const activeCount = numbers.filter((number) => number.status === "active").length;
@@ -210,16 +251,83 @@ export function PhoneNumbersPanel({
   }
 
   async function handleRelease(number: WorkspacePhoneNumber, mode: "pool" | "provider") {
-    const label =
-      mode === "provider"
+    const byo = isByoSip(number);
+    const label = byo
+      ? `Remove ${number.phone_number}? The SIP trunk and its credentials are deleted and calls from your PBX will be rejected. This cannot be undone.`
+      : mode === "provider"
         ? `Release ${number.phone_number} at Telnyx? This cannot be undone.`
         : `Return ${number.phone_number} to the platform pool?`;
     if (typeof window !== "undefined" && !window.confirm(label)) return;
     await runAction(
       `release-${number.id}`,
       () => repo.releasePhoneNumber(workspaceId, number.id, mode),
-      mode === "provider" ? "Number released at Telnyx." : "Number returned to the pool.",
+      byo
+        ? "SIP number removed."
+        : mode === "provider"
+          ? "Number released at Telnyx."
+          : "Number returned to the pool.",
     );
+  }
+
+  async function handleShowSipDetails(number: WorkspacePhoneNumber) {
+    setSipView({ number, connection: null, error: null });
+    const response = await repo.getSipConnection(workspaceId, number.id);
+    setSipView((prev) => {
+      if (!prev || prev.number.id !== number.id) return prev;
+      return response.status === "ready"
+        ? { ...prev, connection: response.data }
+        : { ...prev, error: response.message };
+    });
+  }
+
+  async function handleRotate(number: WorkspacePhoneNumber) {
+    const confirmed =
+      typeof window === "undefined" ||
+      window.confirm(
+        `Rotate the SIP password for ${number.phone_number}? Your PBX will stop authenticating until you update it with the new password.`,
+      );
+    if (!confirmed) return;
+    setBusyId(`rotate-${number.id}`);
+    setActionError(null);
+    setNotice(null);
+    const response = await repo.rotateSipCredentials(workspaceId, number.id);
+    setBusyId(null);
+    if (response.status !== "ready") {
+      setActionError(response.message);
+      return;
+    }
+    setSipView({ number: response.data.number, connection: response.data.connection, error: null });
+    await load(false);
+  }
+
+  function startEditAddresses(number: WorkspacePhoneNumber) {
+    setEditingId(number.id);
+    setEditText((number.sip?.allowed_addresses ?? []).join("\n"));
+    setEditError(null);
+  }
+
+  async function handleSaveAddresses(number: WorkspacePhoneNumber) {
+    const addresses = parseAddressList(editText);
+    const validation = validateAddressList(addresses);
+    if (validation) {
+      setEditError(validation);
+      return;
+    }
+    if (addresses.length === 0 && !number.sip?.has_credentials) {
+      setEditError("Keep at least one allowed IP/CIDR, since this trunk has no SIP credentials.");
+      return;
+    }
+    setBusyId(`sip-access-${number.id}`);
+    setEditError(null);
+    const response = await repo.updateSipAccess(workspaceId, number.id, addresses);
+    setBusyId(null);
+    if (response.status !== "ready") {
+      setEditError(response.message);
+      return;
+    }
+    setEditingId(null);
+    setNotice("Allowed IPs updated.");
+    await load(false);
   }
 
   return (
@@ -229,31 +337,50 @@ export function PhoneNumbersPanel({
           <div className="flex items-center gap-2">
             <h1 className="text-2xl font-bold tracking-tight text-accent-black">Phone numbers</h1>
             <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-neutral-100 text-neutral-600 border border-neutral-200">
-              Telnyx → LiveKit SIP
+              {headerChipText(snapshot, setup)}
             </span>
           </div>
           <p className="text-xs text-neutral-500 mt-1">
-            Buy a number on the platform account, route it through LiveKit, and assign the agent
-            that answers inbound calls.
+            {purchaseAvailable && byoAvailable
+              ? "Buy a number on the platform account or connect your own SIP trunk, route it through LiveKit, and assign the agent that answers inbound calls."
+              : purchaseAvailable
+                ? "Buy a number on the platform account, route it through LiveKit, and assign the agent that answers inbound calls."
+                : byoAvailable
+                  ? "Connect your own SIP trunk or PBX, route it through LiveKit, and assign the agent that answers inbound calls. Buying numbers is not available on this deployment."
+                  : "Number purchasing and SIP trunks are not enabled on this deployment."}
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={() => {
-            setBuyOpen(true);
-            setSearchError(null);
-          }}
-          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-heat-100 hover:bg-heat-200 text-white text-xs font-semibold rounded-8 shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>Buy a number</span>
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          {byoAvailable && (
+            <button
+              type="button"
+              onClick={() => setByoOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-accent-black hover:bg-neutral-800 text-white text-xs font-semibold rounded-8 shadow-xs transition-colors cursor-pointer"
+            >
+              <PlugZap className="w-3.5 h-3.5" />
+              <span>Connect your SIP trunk</span>
+            </button>
+          )}
+          {purchaseAvailable && (
+            <button
+              type="button"
+              onClick={() => {
+                setBuyOpen(true);
+                setSearchError(null);
+              }}
+              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-heat-100 hover:bg-heat-200 text-white text-xs font-semibold rounded-8 shadow-xs transition-colors cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Buy a number</span>
+            </button>
+          )}
+        </div>
       </div>
 
       <VoiceSubnav workspaceId={workspaceId} isPreview={isPreview} liveCount={0} />
 
-      {snapshot && !snapshot.configured && (
+      {snapshot && purchaseAvailable && !snapshot.configured && (
         <div className="flex items-start gap-2.5 rounded-12 border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
           <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
           <div>
@@ -297,6 +424,8 @@ export function PhoneNumbersPanel({
           </button>
         </div>
       )}
+
+      <InboundReadinessPanel workspaceId={workspaceId} repository={repo} onLoaded={setSetup} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
         <div className="bg-white border border-border-faint rounded-12 p-4 shadow-xs">
@@ -355,18 +484,39 @@ export function PhoneNumbersPanel({
           <div>
             <h2 className="text-lg font-bold text-accent-black">No numbers yet</h2>
             <p className="text-xs text-neutral-500 max-w-md mx-auto mt-1 leading-relaxed">
-              Buy a number to give this workspace a real inbound line. We order it on the platform
-              Telnyx account, point it at LiveKit SIP, and create the dispatch rule automatically.
+              {purchaseAvailable &&
+                "Buy a number to give this workspace a real inbound line. We order it on the platform Telnyx account, point it at LiveKit SIP, and create the dispatch rule automatically."}
+              {purchaseAvailable && byoAvailable && " Or "}
+              {byoAvailable &&
+                (purchaseAvailable
+                  ? "connect your own SIP trunk or PBX and we will show you exactly what to configure."
+                  : "Connect your own SIP trunk or PBX and we will show you exactly what to configure.")}
+              {!purchaseAvailable && !byoAvailable &&
+                "Number purchasing and SIP trunks are not enabled on this deployment."}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={() => setBuyOpen(true)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-heat-100 hover:bg-heat-200 text-white text-xs font-semibold rounded-10 shadow-sm transition-colors cursor-pointer"
-          >
-            <Plus className="w-4 h-4" />
-            Buy your first number
-          </button>
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {purchaseAvailable && (
+              <button
+                type="button"
+                onClick={() => setBuyOpen(true)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-heat-100 hover:bg-heat-200 text-white text-xs font-semibold rounded-10 shadow-sm transition-colors cursor-pointer"
+              >
+                <Plus className="w-4 h-4" />
+                Buy your first number
+              </button>
+            )}
+            {byoAvailable && (
+              <button
+                type="button"
+                onClick={() => setByoOpen(true)}
+                className="inline-flex items-center gap-2 px-5 py-2.5 bg-accent-black hover:bg-neutral-800 text-white text-xs font-semibold rounded-10 shadow-sm transition-colors cursor-pointer"
+              >
+                <PlugZap className="w-4 h-4" />
+                Connect your SIP trunk
+              </button>
+            )}
+          </div>
         </div>
       ) : (
         <div className="bg-white border border-border-faint rounded-12 overflow-hidden shadow-xs">
@@ -384,16 +534,32 @@ export function PhoneNumbersPanel({
               <tbody className="divide-y divide-border-faint">
                 {numbers.map((number) => {
                   const busy = busyId?.includes(number.id);
+                  const byo = isByoSip(number);
                   return (
-                    <tr key={number.id} className="hover:bg-neutral-50/60 transition-colors">
+                    <Fragment key={number.id}>
+                    <tr className="hover:bg-neutral-50/60 transition-colors">
                       <td className="py-3 px-4">
                         <div className="font-semibold text-accent-black font-mono">
                           {number.phone_number}
+                          {byo && (
+                            <span className="ml-2 text-[10px] font-sans font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded-full px-1.5 py-0.5">
+                              SIP
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-neutral-400 mt-0.5">
                           {number.friendly_name ?? formatLocation(number)} ·{" "}
-                          {number.number_type ?? "local"}
+                          {byo ? "your SIP trunk" : (number.number_type ?? "local")}
                         </div>
+                        {byo && number.sip && (
+                          <div className="text-[11px] text-neutral-400 mt-0.5">
+                            {number.sip.allowed_addresses.length} allowed IP
+                            {number.sip.allowed_addresses.length === 1 ? "" : "s"}
+                            {number.sip.has_credentials
+                              ? ` · user ${number.sip.auth_username ?? "set"}`
+                              : " · no credentials"}
+                          </div>
+                        )}
                         {number.provisioning_error && (
                           <div className="text-[11px] text-red-600 mt-1 max-w-xs truncate">
                             {number.provisioning_error}
@@ -428,9 +594,13 @@ export function PhoneNumbersPanel({
                       <td className="py-3 px-3">
                         <StatusBadge status={number.inbound_status} />
                         <div className="text-[10px] text-neutral-400 mt-1 font-mono">
-                          {number.livekit_dispatch_rule_id
-                            ? `rule ${number.livekit_dispatch_rule_id.slice(0, 12)}…`
-                            : "no dispatch rule"}
+                          {byo
+                            ? number.livekit_trunk_id
+                              ? `trunk ${number.livekit_trunk_id.slice(0, 12)}…`
+                              : "no trunk"
+                            : number.livekit_dispatch_rule_id
+                              ? `rule ${number.livekit_dispatch_rule_id.slice(0, 12)}…`
+                              : "no dispatch rule"}
                         </div>
                       </td>
                       <td className="py-3 px-3 text-neutral-600 whitespace-nowrap">
@@ -440,30 +610,116 @@ export function PhoneNumbersPanel({
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right whitespace-nowrap">
-                        <div className="inline-flex items-center gap-1.5">
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void handleRelease(number, "pool")}
-                            title="Return to platform pool"
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-neutral-600 hover:text-accent-black bg-neutral-100 hover:bg-neutral-200 transition-colors disabled:opacity-50"
-                          >
-                            <RotateCcw className="w-3 h-3" />
-                            Pool
-                          </button>
-                          <button
-                            type="button"
-                            disabled={busy}
-                            onClick={() => void handleRelease(number, "provider")}
-                            title="Release at Telnyx"
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                            Release
-                          </button>
-                        </div>
+                        {byo ? (
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleShowSipDetails(number)}
+                              title="View SIP trunk connection details"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-neutral-700 hover:text-accent-black bg-neutral-100 hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                            >
+                              <Plug className="w-3 h-3" />
+                              Details
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleRotate(number)}
+                              title="Rotate SIP credentials"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-neutral-700 hover:text-accent-black bg-neutral-100 hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                            >
+                              <KeyRound className="w-3 h-3" />
+                              Rotate
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() =>
+                                editingId === number.id
+                                  ? setEditingId(null)
+                                  : startEditAddresses(number)
+                              }
+                              title="Edit allowed source IPs"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-neutral-700 hover:text-accent-black bg-neutral-100 hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                            >
+                              <Pencil className="w-3 h-3" />
+                              IPs
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleRelease(number, "provider")}
+                              title="Remove this SIP number"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              Remove
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="inline-flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleRelease(number, "pool")}
+                              title="Return to platform pool"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-neutral-600 hover:text-accent-black bg-neutral-100 hover:bg-neutral-200 transition-colors disabled:opacity-50"
+                            >
+                              <RotateCcw className="w-3 h-3" />
+                              Pool
+                            </button>
+                            <button
+                              type="button"
+                              disabled={busy}
+                              onClick={() => void handleRelease(number, "provider")}
+                              title="Release at Telnyx"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-6 text-[11px] font-semibold text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 transition-colors disabled:opacity-50"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              Release
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
+                    {editingId === number.id && (
+                      <tr className="bg-neutral-50/70">
+                        <td colSpan={5} className="py-3 px-4">
+                          <div className="space-y-2 max-w-lg">
+                            <label className="text-[11px] font-semibold text-neutral-700 block">
+                              Allowed source IPs / CIDRs for {number.phone_number} (one per line):
+                            </label>
+                            <textarea
+                              rows={3}
+                              value={editText}
+                              onChange={(e) => setEditText(e.target.value)}
+                              className="w-full text-xs font-mono bg-white border border-neutral-200 rounded-6 p-2 text-accent-black focus:outline-none focus:ring-1 focus:ring-heat-100"
+                              placeholder="203.0.113.10&#10;198.51.100.0/24"
+                            />
+                            {editError && <p className="text-[11px] text-red-600">{editError}</p>}
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => void handleSaveAddresses(number)}
+                                className="px-2.5 py-1 text-[11px] font-semibold text-white bg-heat-100 hover:bg-heat-200 rounded-6 disabled:opacity-50"
+                              >
+                                Save IPs
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setEditingId(null)}
+                                className="px-2.5 py-1 text-[11px] font-semibold text-neutral-600 hover:text-neutral-900"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                   );
                 })}
               </tbody>
@@ -686,6 +942,41 @@ export function PhoneNumbersPanel({
             )}
           </div>
         </div>
+      )}
+
+      {byoOpen && (
+        <ByoSipDialog
+          workspaceId={workspaceId}
+          repository={repo}
+          agents={agents}
+          onClose={() => setByoOpen(false)}
+          onRegistered={() => {
+            void load(false);
+          }}
+        />
+      )}
+
+      {sipView && (
+        <SipModal
+          title={`SIP trunk · ${sipView.number.phone_number}`}
+          description="Configuration for your PBX, carrier trunk, or softphone."
+          onClose={() => setSipView(null)}
+        >
+          {sipView.error ? (
+            <div className="rounded-8 border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+              {sipView.error}
+            </div>
+          ) : sipView.connection ? (
+            <SipConnectionDetails
+              connection={sipView.connection}
+              phoneNumber={sipView.number.phone_number}
+            />
+          ) : (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-5 h-5 animate-spin text-neutral-400" />
+            </div>
+          )}
+        </SipModal>
       )}
     </div>
   );

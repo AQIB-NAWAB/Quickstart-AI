@@ -208,8 +208,8 @@ export function Navbar() {
           {directLinks.map(({ label, href }) => <Link key={href} className="qs-nav-link" aria-current={href === `#${activeSection}` ? "location" : undefined} href={href} onClick={closeAll}>{label}</Link>)}
         </nav>
         <div className="qs-nav-account">
-          <Link href="/login" className="qs-nav-link">Log in</Link>
-          <Link href="/register" className="qs-nav-cta">Start building<ArrowRight size={17} aria-hidden="true" /></Link>
+          <Link href="/request-access" className="qs-nav-link">Log in</Link>
+          <Link href="/request-access" className="qs-nav-cta">Request access<ArrowRight size={17} aria-hidden="true" /></Link>
         </div>
         <button ref={mobileToggleRef} type="button" className="qs-nav-mobile-toggle"
           aria-expanded={mobileOpen} aria-controls="qs-mobile-navigation" aria-label={mobileOpen ? "Close navigation menu" : "Open navigation menu"}
@@ -239,8 +239,8 @@ export function Navbar() {
           ))}
           {directLinks.map(({ label, href }) => <Link key={href} className="qs-nav-mobile-heading" aria-current={href === `#${activeSection}` ? "location" : undefined} href={href} onClick={closeAll}>{label}</Link>)}
           <div className="qs-nav-mobile-account">
-            <Link href="/login" className="qs-nav-link" onClick={closeAll}>Log in</Link>
-            <Link href="/register" className="qs-nav-cta" onClick={closeAll}>Start building<ArrowRight size={17} aria-hidden="true" /></Link>
+            <Link href="/request-access" className="qs-nav-link" onClick={closeAll}>Log in</Link>
+            <Link href="/request-access" className="qs-nav-cta" onClick={closeAll}>Request access<ArrowRight size={17} aria-hidden="true" /></Link>
           </div>
       </nav>
     </header>

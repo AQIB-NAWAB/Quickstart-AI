@@ -2,6 +2,7 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-24
+- **Amended by:** [ADR 0031](0031-byo-sip-and-self-hosted-sip.md) (adds BYO SIP trunks and self-hosted LiveKit SIP)
 - **Supersedes (inbound path):** ADR 0022's Twilio-media-stream-only inbound slice
 - **Feature:** 21C extension — number inventory and production inbound
 

@@ -4,15 +4,19 @@ import {
   SAMPLE_LIVE_CALLS,
 } from "./fixtures";
 import type {
+  ByoSipNumberInput,
+  ByoSipNumberResult,
   CallLogFilters,
   InboundCall,
   InboundCallDetail,
+  InboundSetupInfo,
   PhoneNumberSearchFilters,
   PhoneNumbersSnapshot,
   ProcessingTurn,
   PurchasePhoneNumberInput,
   RepositoryResult,
   SimulatedInboundCallResult,
+  SipConnectionInfo,
   TranscriptSegment,
   UpdatePhoneNumberInput,
   VoiceInboundSummary,
@@ -25,6 +29,8 @@ class InMemoryVoicePreviewStore implements VoiceRepository {
   private calls: InboundCall[] = [];
   private liveCalls: InboundCall[] = [];
   private callDetails: Map<string, InboundCallDetail> = new Map();
+  private byoNumbers: WorkspacePhoneNumber[] = [];
+  private byoPasswords: Map<string, number> = new Map();
 
   constructor() {
     this.reset();
@@ -34,6 +40,8 @@ class InMemoryVoicePreviewStore implements VoiceRepository {
     this.calls = JSON.parse(JSON.stringify(SAMPLE_INBOUND_CALLS));
     this.liveCalls = JSON.parse(JSON.stringify(SAMPLE_LIVE_CALLS));
     this.callDetails.clear();
+    this.byoNumbers = [];
+    this.byoPasswords.clear();
     this.callDetails.set("call_1042", JSON.parse(JSON.stringify(SAMPLE_INBOUND_CALL_DETAIL_1042)));
   }
 
@@ -212,7 +220,9 @@ class InMemoryVoicePreviewStore implements VoiceRepository {
       status: "ready",
       data: {
         configured: false,
-        numbers: [previewNumber("+14155550142", "Support line")],
+        purchase_available: true,
+        byo_sip_available: true,
+        numbers: [previewNumber("+14155550142", "Support line"), ...this.byoNumbers],
         pool: [previewNumber("+12125550199", "Platform pool")],
       },
     };
@@ -270,6 +280,13 @@ class InMemoryVoicePreviewStore implements VoiceRepository {
   ): Promise<RepositoryResult<WorkspacePhoneNumber>> {
     void _workspaceId;
     void _signal;
+    const byo = this.byoNumbers.find((item) => item.id === numberId);
+    if (byo) {
+      if (input.assigned_agent_id !== undefined) byo.assigned_agent_id = input.assigned_agent_id;
+      if (input.friendly_name !== undefined) byo.friendly_name = input.friendly_name;
+      byo.updated_at = new Date().toISOString();
+      return { status: "ready", data: { ...byo } };
+    }
     return {
       status: "ready",
       data: {
@@ -290,11 +307,218 @@ class InMemoryVoicePreviewStore implements VoiceRepository {
     void _workspaceId;
     void _mode;
     void _signal;
+    const byo = this.byoNumbers.find((item) => item.id === numberId);
+    if (byo) {
+      this.byoNumbers = this.byoNumbers.filter((item) => item.id !== numberId);
+      this.byoPasswords.delete(numberId);
+      return { status: "ready", data: { ...byo, status: "released", inbound_status: "released" } };
+    }
     return {
       status: "ready",
       data: { ...previewNumber("+14155550142", "Support line"), id: numberId, status: "available" },
     };
   }
+
+  async getInboundSetup(
+    _workspaceId: string,
+    _signal?: AbortSignal,
+  ): Promise<RepositoryResult<InboundSetupInfo>> {
+    void _workspaceId;
+    void _signal;
+    return {
+      status: "ready",
+      data: {
+        request_id: "preview-setup",
+        mode: "self_hosted",
+        configured: true,
+        purchase_available: true,
+        byo_sip_available: true,
+        ready: false,
+        connection: {
+          host: PREVIEW_SIP_HOST,
+          port: 5060,
+          tls_port: 5061,
+          transports: ["udp", "tcp", "tls"],
+          codecs: ["PCMU", "PCMA", "opus"],
+          dtmf: "rfc2833",
+          rtp_port_range: "10000-20000",
+          server_ips: ["203.0.113.10", "203.0.113.11"],
+        },
+        webhooks: {
+          livekit: "https://app.example.com/api/webhooks/livekit",
+          telnyx: "https://app.example.com/api/webhooks/telnyx",
+        },
+        checks: [
+          {
+            id: "livekit_credentials",
+            label: "LiveKit credentials",
+            status: "ok",
+            detail: "LIVEKIT_URL, API key and secret are set.",
+          },
+          {
+            id: "sip_edge",
+            label: "SIP edge reachable",
+            status: "ok",
+            detail: `${PREVIEW_SIP_HOST} answers on UDP/TCP 5060 and TLS 5061.`,
+          },
+          {
+            id: "public_ip",
+            label: "Public SIP address",
+            status: "warn",
+            detail: "Server public IPs are set, but the RTP port range is not confirmed open.",
+          },
+          {
+            id: "telnyx_webhook",
+            label: "Telnyx webhook signature",
+            status: "warn",
+            detail: "TELNYX_PUBLIC_KEY is not set; Telnyx numbers will not be verified.",
+          },
+        ],
+      },
+    };
+  }
+
+  async registerByoSipNumber(
+    _workspaceId: string,
+    input: ByoSipNumberInput,
+    _signal?: AbortSignal,
+  ): Promise<RepositoryResult<ByoSipNumberResult>> {
+    void _workspaceId;
+    void _signal;
+    const e164 = input.e164.trim();
+    if (this.byoNumbers.some((item) => item.phone_number === e164)) {
+      return { status: "error", message: `${e164} is already registered.` };
+    }
+    const allowed = input.allowed_addresses ?? [];
+    const wantsCredentials = Boolean(input.generate_credentials);
+    if (allowed.length === 0 && !wantsCredentials) {
+      return {
+        status: "error",
+        message: "Provide at least one allowed IP/CIDR or enable SIP credentials.",
+      };
+    }
+    const username = wantsCredentials
+      ? input.auth_username?.trim() || `qs_${e164.replace(/\D/g, "").slice(-6)}`
+      : null;
+    const now = new Date().toISOString();
+    const number: WorkspacePhoneNumber = {
+      ...previewNumber(e164, input.friendly_name?.trim() || "Your SIP trunk"),
+      id: `preview-byo-${e164.replace(/\D/g, "")}`,
+      provider: "byo_sip",
+      assigned_agent_id: input.agent_id ?? null,
+      livekit_trunk_id: `ST_preview${e164.replace(/\D/g, "").slice(-6)}`,
+      livekit_dispatch_rule_id: `SDR_preview${e164.replace(/\D/g, "").slice(-6)}`,
+      monthly_cost: null,
+      currency: null,
+      capabilities: { voice: true, sms: false },
+      purchased_at: null,
+      created_at: now,
+      updated_at: now,
+      sip: {
+        allowed_addresses: allowed,
+        auth_username: username,
+        has_credentials: wantsCredentials,
+      },
+    };
+    this.byoNumbers.push(number);
+    this.byoPasswords.set(number.id, 1);
+    return {
+      status: "ready",
+      data: {
+        number: { ...number },
+        connection: previewConnection(number, this.passwordFor(number.id)),
+      },
+    };
+  }
+
+  async getSipConnection(
+    _workspaceId: string,
+    numberId: string,
+    _signal?: AbortSignal,
+  ): Promise<RepositoryResult<SipConnectionInfo>> {
+    void _workspaceId;
+    void _signal;
+    const number = this.byoNumbers.find((item) => item.id === numberId);
+    if (!number) return { status: "not_found", message: "SIP number not found." };
+    return { status: "ready", data: previewConnection(number) };
+  }
+
+  async rotateSipCredentials(
+    _workspaceId: string,
+    numberId: string,
+    _signal?: AbortSignal,
+  ): Promise<RepositoryResult<ByoSipNumberResult>> {
+    void _workspaceId;
+    void _signal;
+    const number = this.byoNumbers.find((item) => item.id === numberId);
+    if (!number) return { status: "not_found", message: "SIP number not found." };
+    this.byoPasswords.set(numberId, (this.byoPasswords.get(numberId) ?? 1) + 1);
+    number.sip = {
+      allowed_addresses: number.sip?.allowed_addresses ?? [],
+      auth_username: number.sip?.auth_username ?? `qs_${number.phone_number.replace(/\D/g, "").slice(-6)}`,
+      has_credentials: true,
+    };
+    number.updated_at = new Date().toISOString();
+    return {
+      status: "ready",
+      data: { number: { ...number }, connection: previewConnection(number, this.passwordFor(numberId)) },
+    };
+  }
+
+  async updateSipAccess(
+    _workspaceId: string,
+    numberId: string,
+    allowedAddresses: string[],
+    _signal?: AbortSignal,
+  ): Promise<RepositoryResult<WorkspacePhoneNumber>> {
+    void _workspaceId;
+    void _signal;
+    const number = this.byoNumbers.find((item) => item.id === numberId);
+    if (!number) return { status: "not_found", message: "SIP number not found." };
+    if (allowedAddresses.length === 0 && !number.sip?.has_credentials) {
+      return {
+        status: "error",
+        message: "A trunk needs at least one allowed IP/CIDR or SIP credentials.",
+      };
+    }
+    number.sip = {
+      allowed_addresses: allowedAddresses,
+      auth_username: number.sip?.auth_username ?? null,
+      has_credentials: number.sip?.has_credentials ?? false,
+    };
+    number.updated_at = new Date().toISOString();
+    return { status: "ready", data: { ...number } };
+  }
+
+  /** Deterministic fake password, shown once to mimic the real backend. */
+  private passwordFor(numberId: string): string {
+    const version = this.byoPasswords.get(numberId) ?? 1;
+    return `preview-Pw${version}-Xk39fQ2LmA7vRt`;
+  }
+}
+
+const PREVIEW_SIP_HOST = "sip.quickstart.example.com";
+
+function previewConnection(number: WorkspacePhoneNumber, password?: string): SipConnectionInfo {
+  const sip = number.sip;
+  return {
+    host: PREVIEW_SIP_HOST,
+    port: 5060,
+    tls_port: 5061,
+    transports: ["udp", "tcp", "tls"],
+    sip_uri: `sip:${number.phone_number}@${PREVIEW_SIP_HOST}:5060`,
+    accepted_number_formats: [
+      number.phone_number,
+      number.phone_number.replace(/^\+/, ""),
+    ],
+    allowed_addresses: sip?.allowed_addresses ?? [],
+    auth_username: sip?.auth_username ?? null,
+    ...(password && sip?.has_credentials ? { auth_password: password } : {}),
+    codecs: ["PCMU", "PCMA", "opus"],
+    dtmf: "rfc2833",
+    rtp_port_range: "10000-20000",
+    server_ips: ["203.0.113.10", "203.0.113.11"],
+  };
 }
 
 function previewNumber(e164: string, label: string): WorkspacePhoneNumber {
@@ -324,6 +548,7 @@ function previewNumber(e164: string, label: string): WorkspacePhoneNumber {
     released_at: null,
     created_at: now,
     updated_at: now,
+    sip: null,
   };
 }
 

@@ -129,6 +129,48 @@ purchase and routing transitions are simulated so the UI and tests work locally.
 
 Full decision record: [docs/adr/0023-inbound-telnyx-livekit.md](../../docs/adr/0023-inbound-telnyx-livekit.md).
 
+## Bring your own SIP / self-hosted SIP (`TELEPHONY_PROFILE=sip`)
+
+For carrier independence (Twilio Elastic SIP, Telnyx, Bandwidth, customer PBXs, or on-prem Asterisk / FreeSWITCH), run with `TELEPHONY_PROFILE=sip`:
+
+```bash
+TELEPHONY_PROFILE=sip
+TELEPHONY_REQUIRE_REAL=1
+
+# LiveKit Cloud or self-hosted (deploy/sip/)
+LIVEKIT_URL=wss://<project>.livekit.cloud    # or ws://127.0.0.1:7880
+LIVEKIT_API_KEY=...
+LIVEKIT_API_SECRET=...
+LIVEKIT_SIP_ENDPOINT=<project>.sip.livekit.cloud  # or sip.yourdomain.com:5060
+LIVEKIT_BRIDGE_ENABLED=1
+VOICE_PUBLIC_BASE_URL=https://<voice-host>
+
+# Public SIP Ingress advertising
+SIP_PUBLIC_PORT=5060
+SIP_TRANSPORTS=udp,tcp
+SIP_RTP_PORT_RANGE=10000-20000
+```
+
+Routes for BYO SIP:
+
+```
+GET    /v1/workspaces/:id/voice/sip/setup                   # Readiness checks & connection info
+POST   /v1/workspaces/:id/voice/numbers/byo                 # Register PBX / trunk (+E.164, IPs, credentials)
+GET    /v1/workspaces/:id/voice/numbers/:numberId/sip       # View connection settings (no password)
+POST   /v1/workspaces/:id/voice/numbers/:numberId/sip/rotate-credentials # Rotate trunk password
+PATCH  /v1/workspaces/:id/voice/numbers/:numberId           # Update source IP allowlist
+```
+
+Trunk security:
+- **Zero-Storage Password:** Passwords are generated cryptographically, returned once to the caller, and retained only by the LiveKit SIP server.
+- **Access Control:** Trunks must specify allowed source IP CIDRs (IPv4 `/16+` or IPv6 `/48+`) or SIP digest credentials. Open trunks are rejected.
+
+Guides & Documentation:
+- Self-hosted SIP server deployment: [deploy/sip/README.md](../../deploy/sip/README.md)
+- Bring-your-own SIP carrier & PBX setup: [deploy/sip/BYO-SIP.md](../../deploy/sip/BYO-SIP.md)
+- Inbound operations runbook: [docs/runbooks/inbound-calling.md](../../docs/runbooks/inbound-calling.md)
+- Decision record: [docs/adr/0031-byo-sip-and-self-hosted-sip.md](../../docs/adr/0031-byo-sip-and-self-hosted-sip.md)
+
 ## Live turn-taking, interruptions, and tool calls
 
 The inbound bridge uses the same `WidgetVoiceLiveSession` as widget voice. The live path is tuned as follows:

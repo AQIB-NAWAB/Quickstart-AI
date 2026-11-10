@@ -1,5 +1,11 @@
 import type { Logger } from "@quickstart/logging";
-import { AccessToken, LiveKitAPI, WebhookReceiver, type WebhookEvent } from "livekit-server-sdk";
+import {
+  AccessToken,
+  LiveKitAPI,
+  WebhookReceiver,
+  type SipInboundTrunkUpdateOptions,
+  type WebhookEvent,
+} from "livekit-server-sdk";
 
 export type LiveKitProvisionerConfig = {
   url?: string;
@@ -16,12 +22,32 @@ export type ProvisionedRoute = {
   configured: boolean;
 };
 
+/** Access controls for a customer-managed (bring-your-own) SIP trunk. */
+export type ProvisionSipOptions = {
+  /** Source IPs/CIDRs the trunk accepts INVITEs from. */
+  allowedAddresses?: string[];
+  authUsername?: string;
+  authPassword?: string;
+  /** Called-number forms the trunk matches. Defaults to the E.164 only. */
+  numbers?: string[];
+};
+
 export type ProvisionNumberInput = {
   numberId: string;
   e164: string;
   workspaceId: string;
   agentId?: string | null;
+  sip?: ProvisionSipOptions;
 };
+
+export type TrunkAccessUpdate = {
+  /** Replace the allowlist. An empty array clears it. */
+  allowedAddresses?: string[];
+  authUsername?: string;
+  authPassword?: string;
+};
+
+export type SipConnectionCheck = { ok: boolean; detail: string };
 
 export interface SipProvisioner {
   readonly configured: boolean;
@@ -31,6 +57,10 @@ export interface SipProvisioner {
     trunkId?: string | null;
     dispatchRuleId?: string | null;
   }): Promise<void>;
+  /** Change who may deliver calls to an existing inbound trunk. */
+  updateTrunkAccess(trunkId: string, update: TrunkAccessUpdate): Promise<void>;
+  /** Verify the LiveKit API is reachable and the credentials are accepted. */
+  checkConnection(): Promise<SipConnectionCheck>;
   verifyWebhook(rawBody: string, authHeader?: string): Promise<WebhookEvent | null>;
   mintJoinToken(input: { roomName: string; identity: string; name?: string }): Promise<string>;
   removeParticipant(roomName: string, identity: string): Promise<void>;
@@ -89,10 +119,20 @@ export class LiveKitSipProvisioner implements SipProvisioner {
       agent_id: input.agentId ?? null,
     });
     try {
-      const trunk = await this.api.sip.createSipInboundTrunk(name, [input.e164], {
-        metadata,
-        krispEnabled: true,
-      });
+      const trunk = await this.api.sip.createSipInboundTrunk(
+        name,
+        input.sip?.numbers?.length ? input.sip.numbers : [input.e164],
+        {
+          metadata,
+          krispEnabled: true,
+          ...(input.sip?.allowedAddresses?.length
+            ? { allowedAddresses: input.sip.allowedAddresses }
+            : {}),
+          ...(input.sip?.authUsername && input.sip.authPassword
+            ? { authUsername: input.sip.authUsername, authPassword: input.sip.authPassword }
+            : {}),
+        },
+      );
       const rule = await this.api.sip.createSipDispatchRule(
         { type: "individual", roomPrefix: inboundRoomPrefix(input.numberId) },
         {
@@ -135,6 +175,42 @@ export class LiveKitSipProvisioner implements SipProvisioner {
           error: err instanceof Error ? err.message : String(err),
         });
       });
+    }
+  }
+
+  async updateTrunkAccess(trunkId: string, update: TrunkAccessUpdate): Promise<void> {
+    const fields: Record<string, unknown> = {};
+    if (update.allowedAddresses) {
+      fields.allowedAddresses = update.allowedAddresses.length
+        ? { set: update.allowedAddresses }
+        : { clear: true };
+    }
+    if (update.authUsername !== undefined) fields.authUsername = update.authUsername;
+    if (update.authPassword !== undefined) fields.authPassword = update.authPassword;
+    try {
+      // The SDK serialises through protobuf-es, which accepts plain-object ListUpdate values.
+      await this.api.sip.updateSipInboundTrunkFields(
+        trunkId,
+        fields as unknown as SipInboundTrunkUpdateOptions,
+      );
+    } catch (err) {
+      this.logger?.error("livekit.sip.update_trunk_failed", {
+        trunk_id: trunkId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+  }
+
+  async checkConnection(): Promise<SipConnectionCheck> {
+    try {
+      await this.api.sip.listSipInboundTrunk({});
+      return { ok: true, detail: "LiveKit API reachable and credentials accepted" };
+    } catch (err) {
+      return {
+        ok: false,
+        detail: `LiveKit API check failed: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
   }
 
@@ -193,6 +269,11 @@ export class FakeSipProvisioner implements SipProvisioner {
   readonly sipEndpoint = "fake.sip.livekit.cloud";
   private counter = 1;
   private readonly webhookSecret: string;
+  /** Trunks created by this fake, inspectable from tests and proof scripts. */
+  readonly trunks = new Map<
+    string,
+    { numbers: string[]; allowedAddresses: string[]; authUsername?: string; authPassword?: string }
+  >();
 
   constructor(webhookSecret = "fake-livekit-webhook") {
     this.webhookSecret = webhookSecret;
@@ -200,6 +281,12 @@ export class FakeSipProvisioner implements SipProvisioner {
 
   async provisionNumber(input: ProvisionNumberInput): Promise<ProvisionedRoute> {
     const suffix = this.counter++;
+    this.trunks.set(`fake_trunk_${suffix}`, {
+      numbers: input.sip?.numbers?.length ? input.sip.numbers : [input.e164],
+      allowedAddresses: input.sip?.allowedAddresses ?? [],
+      authUsername: input.sip?.authUsername,
+      authPassword: input.sip?.authPassword,
+    });
     return {
       trunkId: `fake_trunk_${suffix}`,
       dispatchRuleId: `fake_rule_${suffix}`,
@@ -212,7 +299,19 @@ export class FakeSipProvisioner implements SipProvisioner {
     trunkId?: string | null;
     dispatchRuleId?: string | null;
   }): Promise<void> {
-    void input;
+    if (input.trunkId) this.trunks.delete(input.trunkId);
+  }
+
+  async updateTrunkAccess(trunkId: string, update: TrunkAccessUpdate): Promise<void> {
+    const trunk = this.trunks.get(trunkId);
+    if (!trunk) throw new Error(`fake trunk ${trunkId} not found`);
+    if (update.allowedAddresses) trunk.allowedAddresses = [...update.allowedAddresses];
+    if (update.authUsername !== undefined) trunk.authUsername = update.authUsername;
+    if (update.authPassword !== undefined) trunk.authPassword = update.authPassword;
+  }
+
+  async checkConnection(): Promise<SipConnectionCheck> {
+    return { ok: false, detail: "Fake telephony is active; no LiveKit server is connected" };
   }
 
   async verifyWebhook(rawBody: string, authHeader?: string): Promise<WebhookEvent | null> {

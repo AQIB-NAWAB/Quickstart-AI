@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import type {
   AvailablePhoneNumber,
+  ByoSipSummary,
   PhoneNumberCapabilities,
   PhoneNumberStatus,
   PhoneNumberType,
@@ -131,6 +132,22 @@ function normalizeMetadata(raw: unknown): Record<string, unknown> {
   return {};
 }
 
+/** Stored under `metadata.byo_sip`; never contains the trunk password. */
+export function byoSipSummary(row: Pick<PhoneNumberRow, "provider" | "metadata">): ByoSipSummary | null {
+  if (row.provider !== "byo_sip") return null;
+  const raw = row.metadata.byo_sip;
+  const value = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const allowed = Array.isArray(value.allowed_addresses)
+    ? value.allowed_addresses.filter((entry): entry is string => typeof entry === "string")
+    : [];
+  const username = typeof value.auth_username === "string" ? value.auth_username : null;
+  return {
+    allowed_addresses: allowed,
+    auth_username: username,
+    has_credentials: value.has_credentials === true || Boolean(username),
+  };
+}
+
 export function toWorkspacePhoneNumber(row: PhoneNumberRow): WorkspacePhoneNumber {
   return {
     id: row.id,
@@ -157,6 +174,7 @@ export function toWorkspacePhoneNumber(row: PhoneNumberRow): WorkspacePhoneNumbe
     released_at: row.released_at?.toISOString() ?? null,
     created_at: row.created_at.toISOString(),
     updated_at: row.updated_at.toISOString(),
+    sip: byoSipSummary(row),
   };
 }
 

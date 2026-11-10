@@ -1,0 +1,41 @@
+<!--
+  QuickStart AI - FreeSWITCH Gateway Configuration Example
+
+  Purpose: Forward inbound calls from your FreeSWITCH PBX to a QuickStart AI Agent.
+  Location: /etc/freeswitch/directory/external/quickstart-ai.xml
+-->
+<include>
+  <gateway name="quickstart-ai">
+    <!-- Replace with your LiveKit SIP Host/IP and port (default 5060) -->
+    <param name="realm" value="YOUR_SIP_HOST:5060"/>
+    <param name="proxy" value="YOUR_SIP_HOST:5060"/>
+
+    <!-- Credentials generated when registering the number in QuickStart -->
+    <param name="username" value="YOUR_QUICKSTART_SIP_USERNAME"/>
+    <param name="password" value="YOUR_QUICKSTART_SIP_PASSWORD"/>
+
+    <!-- QuickStart does not require FreeSWITCH to REGISTER; it accepts inbound INVITEs -->
+    <param name="register" value="false"/>
+    <param name="register-transport" value="udp"/>
+    
+    <!-- Codecs -->
+    <param name="codec-prefs" value="PCMU,PCMA"/>
+
+    <!-- Caller ID headers -->
+    <param name="caller-id-in-from" value="true"/>
+    <param name="ping" value="25"/>
+    <param name="ping-min" value="3"/>
+    <param name="ping-max" value="6"/>
+  </gateway>
+</include>
+
+<!--
+  Dialplan Example (/etc/freeswitch/dialplan/default.xml):
+
+  <extension name="route_to_quickstart">
+    <condition field="destination_number" expression="^\+?1?(4155550123)$">
+      <action application="set" data="effective_caller_id_number=${caller_id_number}"/>
+      <action application="bridge" data="sofia/gateway/quickstart-ai/+14155550123"/>
+    </condition>
+  </extension>
+-->

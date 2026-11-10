@@ -1,0 +1,89 @@
+# Self-hosted LiveKit SIP stack: redis + livekit-server + livekit/sip.
+#
+# Usage (see README.md):
+#   ./render-config.sh                      # writes .env secrets + config/*.yaml
+#   docker compose -f deploy/sip/docker-compose.yml up -d --wait
+#
+# Variables are read from deploy/sip/.env (compose project dir = this directory).
+#
+# Why host networking for livekit + sip:
+#   * SIP/RTP: the SIP service binds a UDP range of ~10 000 ports (RTP_PORT_RANGE).
+#     Publishing that with `ports:` creates one docker-proxy/NAT rule per port, is
+#     slow to start, and breaks symmetric RTP and the source IP seen by carriers.
+#   * NAT/ICE: both services advertise their own IP in SDP / ICE candidates. Behind
+#     docker's bridge NAT they would advertise the container IP and calls would
+#     connect with one-way or no audio.
+#   * Carrier ACLs see the real source address of signalling and media.
+# Consequence: the containers bind directly on the host. Everything not listed as
+# public in README.md ("Firewall") must be blocked by the host firewall/security
+# group. Linux only (host networking does not work on Docker Desktop for Mac/Windows).
+#
+# Redis stays on a normal bridge network and is published on 127.0.0.1 only; the
+# host-networked containers reach it at 127.0.0.1:${REDIS_PORT}.
+
+name: quickstart-sip
+
+services:
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    restart: unless-stopped
+    # AOF so SIP session state survives a restart.
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  livekit:
+    image: ${LIVEKIT_SERVER_IMAGE:-livekit/livekit-server:v1.13.11}
+    restart: unless-stopped
+    network_mode: host
+    command: ["--config", "/etc/livekit.yaml"]
+    volumes:
+      - ./config/livekit.yaml:/etc/livekit.yaml:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # livekit-server answers "OK" on its HTTP port; the image is alpine (busybox wget).
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:${LIVEKIT_PORT:-7880}/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+  sip:
+    image: ${LIVEKIT_SIP_IMAGE:-livekit/sip:v1.23.0}
+    restart: unless-stopped
+    network_mode: host
+    # The image ENTRYPOINT is `livekit-sip --config=/sip/config.yaml`.
+    volumes:
+      - ./config/sip.yaml:/sip/config.yaml:ro
+      # Only needed when SIP_TLS_PORT is set; harmless otherwise (create the dir or
+      # docker creates it root-owned).
+      - ${SIP_CERTS_DIR:-./certs}:/certs:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      # debian-slim has no curl/wget; use bash's /dev/tcp against health_port.
+      # 200 = ok, 429 = ok but under load (still alive, do not restart).
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/${SIP_HEALTH_PORT:-8081} && printf 'GET / HTTP/1.0\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -qE ' (200|429) '"
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  redis-data:

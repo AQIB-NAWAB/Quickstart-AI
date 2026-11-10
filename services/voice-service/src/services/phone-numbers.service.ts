@@ -1,20 +1,35 @@
 import { AppError, ErrorCode } from "@quickstart/errors";
 import type { Logger } from "@quickstart/logging";
-import type {
-  AvailablePhoneNumber,
-  PhoneNumberSearchFilters,
-  PhoneNumberSearchResult,
-  PurchasePhoneNumberInput,
-  UpdatePhoneNumberInput,
-  WorkspacePhoneNumber,
+import {
+  BYO_SIP_PROVIDER_ID,
+  type AvailablePhoneNumber,
+  type ByoSipNumberInput,
+  type ByoSipNumberResult,
+  type PhoneNumberSearchFilters,
+  type PhoneNumberSearchResult,
+  type PurchasePhoneNumberInput,
+  type SipConnectionInfo,
+  type UpdatePhoneNumberInput,
+  type WorkspacePhoneNumber,
 } from "@quickstart/contracts";
 import {
+  byoSipSummary,
   toWorkspacePhoneNumber,
   type PhoneNumberRow,
   type PhoneNumbersRepository,
 } from "../repository/phone-numbers.repository.js";
 import type { SipProvisioner, ProvisionedRoute } from "../telephony/livekit/sip-provisioner.js";
 import type { TelnyxNumbersClient, TelnyxOwnedNumber } from "../telephony/telnyx/types.js";
+import {
+  acceptedNumberFormats,
+  buildConnectionInfo,
+  buildSipEdge,
+  generateSipPassword,
+  generateSipUsername,
+  normalizeAllowedAddresses,
+  validateAuthUsername,
+  type SipEdgeConfig,
+} from "../telephony/sip-edge.js";
 
 const E164 = /^\+[1-9]\d{6,14}$/;
 const CONNECTION_CONFIG_KEY = "telnyx_sip_connection";
@@ -27,6 +42,8 @@ export type InboundNumberRoute = {
   agentId: string | null;
   e164: string;
   roomPrefix: string;
+  /** Carrier path that delivered the number: `telnyx`, `byo_sip`, ... */
+  provider: string;
 };
 
 export type PhoneNumbersServiceDeps = {
@@ -35,6 +52,8 @@ export type PhoneNumbersServiceDeps = {
   provisioner: SipProvisioner;
   connectionName: string;
   configuredConnectionId?: string;
+  /** Public SIP ingress details shown to operators registering their own trunk. */
+  sipEdge?: SipEdgeConfig;
   logger: Logger;
   orderPollAttempts?: number;
   orderPollIntervalMs?: number;
@@ -97,6 +116,13 @@ export class PhoneNumbersService {
     workspaceId: string,
     input: PurchasePhoneNumberInput,
   ): Promise<WorkspacePhoneNumber> {
+    if (this.deps.telnyx.kind === "disabled") {
+      throw new AppError({
+        code: ErrorCode.VALIDATION_FAILED,
+        message:
+          "Buying numbers is not enabled on this deployment. Register your own SIP trunk instead.",
+      });
+    }
     const e164 = normalizeE164(input.e164);
     const existing = await this.deps.repo.findActiveByE164(e164);
     if (existing) {
@@ -227,6 +253,7 @@ export class PhoneNumbersService {
     mode: ReleaseMode,
   ): Promise<WorkspacePhoneNumber> {
     const row = await this.requireWorkspaceNumber(workspaceId, numberId);
+    if (row.provider === BYO_SIP_PROVIDER_ID) return this.removeByo(row);
     await this.deps.repo.update(row.id, {
       status: "releasing",
       inboundStatus: "releasing",
@@ -365,6 +392,244 @@ export class PhoneNumbersService {
     return { handled: true };
   }
 
+  // ---------------------------------------------------------------------------
+  // Bring-your-own SIP: numbers delivered by a customer's PBX / SIP carrier trunk.
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Register a number delivered over the customer's own SIP trunk. Creates a LiveKit
+   * inbound trunk locked to the given source addresses and/or SIP credentials, plus
+   * the dispatch rule that routes each call into its own room.
+   *
+   * The generated password is returned once; only LiveKit retains it.
+   */
+  async registerByo(
+    workspaceId: string,
+    input: ByoSipNumberInput,
+  ): Promise<ByoSipNumberResult> {
+    const e164 = normalizeE164(input.e164);
+    const allowedAddresses = normalizeAllowedAddresses(input.allowed_addresses);
+
+    let authUsername: string | null = null;
+    let authPassword: string | undefined;
+    const wantsCredentials = Boolean(input.generate_credentials) || Boolean(input.auth_username?.trim());
+    if (wantsCredentials) {
+      authUsername = input.auth_username?.trim()
+        ? validateAuthUsername(input.auth_username)
+        : generateSipUsername();
+      authPassword = generateSipPassword();
+    }
+    if (allowedAddresses.length === 0 && !authUsername) {
+      throw new AppError({
+        code: ErrorCode.VALIDATION_FAILED,
+        message:
+          "Protect the trunk: provide allowed source IPs/CIDRs, SIP credentials, or both. An open trunk would accept calls from anyone.",
+      });
+    }
+
+    const existing = await this.deps.repo.getByE164(e164);
+    if (existing) {
+      const foreign = existing.workspace_id !== null && existing.workspace_id !== workspaceId;
+      const inUse =
+        existing.status === "active" ||
+        existing.status === "provisioning" ||
+        existing.status === "releasing";
+      if (foreign || inUse) {
+        throw new AppError({
+          code: ErrorCode.CONFLICT,
+          message: foreign
+            ? `Phone number ${e164} is already registered to another workspace`
+            : existing.workspace_id === workspaceId
+              ? `Phone number ${e164} is already set up in this workspace. Rotate its credentials or edit its allowed IPs instead.`
+              : `Phone number ${e164} belongs to the platform inventory. Claim it from the pool instead.`,
+        });
+      }
+      // A released or failed earlier attempt: clear it so the number can be registered again.
+      await this.deps.repo.delete(existing.id);
+    }
+
+    const row = await this.deps.repo.create({
+      workspaceId,
+      phoneNumber: e164,
+      friendlyName: input.friendly_name ?? null,
+      provider: BYO_SIP_PROVIDER_ID,
+      assignedAgentId: input.agent_id ?? null,
+      status: "provisioning",
+      inboundStatus: "provisioning",
+      capabilities: { voice: true, sms: false },
+      purchasedAt: new Date(),
+      metadata: {
+        source: BYO_SIP_PROVIDER_ID,
+        byo_sip: byoMetadata(allowedAddresses, authUsername),
+      },
+    });
+
+    let route: ProvisionedRoute;
+    try {
+      route = await this.deps.provisioner.provisionNumber({
+        numberId: row.id,
+        e164,
+        workspaceId,
+        agentId: input.agent_id ?? null,
+        sip: {
+          allowedAddresses,
+          authUsername: authUsername ?? undefined,
+          authPassword,
+          numbers: acceptedNumberFormats(e164),
+        },
+      });
+    } catch (err) {
+      await this.deps.repo.delete(row.id);
+      const message = err instanceof Error ? err.message : "LiveKit provisioning failed";
+      throw new AppError({
+        code: ErrorCode.UPSTREAM_UNAVAILABLE,
+        message: `Could not create the SIP trunk: ${message}`,
+      });
+    }
+
+    const updated = await this.deps.repo.update(row.id, {
+      status: "active",
+      inboundStatus: "active",
+      livekitTrunkId: route.trunkId,
+      livekitDispatchRuleId: route.dispatchRuleId,
+      provisioningError: null,
+    });
+    const final = updated ?? row;
+    return {
+      number: toWorkspacePhoneNumber(final),
+      connection: this.connectionInfo(final, authPassword),
+    };
+  }
+
+  /** Connection details for a BYO number. Never includes the password. */
+  async getSipConnection(workspaceId: string, numberId: string): Promise<SipConnectionInfo> {
+    const row = await this.requireByoNumber(workspaceId, numberId);
+    return this.connectionInfo(row);
+  }
+
+  /** Replace the SIP password (creating a username if the trunk was IP-only). */
+  async rotateByoCredentials(workspaceId: string, numberId: string): Promise<ByoSipNumberResult> {
+    const row = await this.requireActiveByoNumber(workspaceId, numberId);
+    const summary = byoSipSummary(row);
+    const authUsername = summary?.auth_username ?? generateSipUsername();
+    const authPassword = generateSipPassword();
+    await this.updateTrunk(row, { authUsername, authPassword });
+    const updated = await this.deps.repo.update(row.id, {
+      metadata: {
+        ...row.metadata,
+        byo_sip: byoMetadata(summary?.allowed_addresses ?? [], authUsername),
+      },
+    });
+    const final = updated ?? row;
+    return {
+      number: toWorkspacePhoneNumber(final),
+      connection: this.connectionInfo(final, authPassword),
+    };
+  }
+
+  /** Replace the source-address allowlist of a BYO trunk. */
+  async updateByoAccess(
+    workspaceId: string,
+    numberId: string,
+    allowedAddressesInput: string[],
+  ): Promise<WorkspacePhoneNumber> {
+    const row = await this.requireActiveByoNumber(workspaceId, numberId);
+    const allowedAddresses = normalizeAllowedAddresses(allowedAddressesInput);
+    const summary = byoSipSummary(row);
+    if (allowedAddresses.length === 0 && !summary?.auth_username) {
+      throw new AppError({
+        code: ErrorCode.VALIDATION_FAILED,
+        message:
+          "A trunk needs allowed IPs or SIP credentials. Rotate credentials to add a password before removing every IP.",
+      });
+    }
+    await this.updateTrunk(row, { allowedAddresses });
+    const updated = await this.deps.repo.update(row.id, {
+      metadata: {
+        ...row.metadata,
+        byo_sip: byoMetadata(allowedAddresses, summary?.auth_username ?? null),
+      },
+    });
+    return toWorkspacePhoneNumber(updated ?? row);
+  }
+
+  private async removeByo(row: PhoneNumberRow): Promise<WorkspacePhoneNumber> {
+    await this.deps.provisioner.deprovisionNumber({
+      trunkId: row.livekit_trunk_id,
+      dispatchRuleId: row.livekit_dispatch_rule_id,
+    });
+    await this.deps.repo.delete(row.id);
+    return {
+      ...toWorkspacePhoneNumber(row),
+      status: "released",
+      inbound_status: "released",
+      livekit_trunk_id: null,
+      livekit_dispatch_rule_id: null,
+      released_at: new Date().toISOString(),
+    };
+  }
+
+  private async updateTrunk(
+    row: PhoneNumberRow,
+    update: Parameters<SipProvisioner["updateTrunkAccess"]>[1],
+  ): Promise<void> {
+    if (!row.livekit_trunk_id) {
+      throw new AppError({
+        code: ErrorCode.CONFLICT,
+        message: "This number has no SIP trunk yet; remove it and register it again",
+      });
+    }
+    try {
+      await this.deps.provisioner.updateTrunkAccess(row.livekit_trunk_id, update);
+    } catch (err) {
+      throw new AppError({
+        code: ErrorCode.UPSTREAM_UNAVAILABLE,
+        message: `Could not update the SIP trunk: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+  private connectionInfo(row: PhoneNumberRow, authPassword?: string): SipConnectionInfo {
+    const summary = byoSipSummary(row);
+    return buildConnectionInfo(this.sipEdge(), {
+      e164: row.phone_number,
+      allowedAddresses: summary?.allowed_addresses ?? [],
+      authUsername: summary?.auth_username ?? null,
+      authPassword,
+    });
+  }
+
+  private sipEdge(): SipEdgeConfig {
+    return (
+      this.deps.sipEdge ?? buildSipEdge({ sipEndpoint: this.deps.provisioner.sipEndpoint })
+    );
+  }
+
+  private async requireByoNumber(workspaceId: string, numberId: string): Promise<PhoneNumberRow> {
+    const row = await this.requireWorkspaceNumber(workspaceId, numberId);
+    if (row.provider !== BYO_SIP_PROVIDER_ID) {
+      throw new AppError({
+        code: ErrorCode.VALIDATION_FAILED,
+        message: "This number is not a bring-your-own SIP number",
+      });
+    }
+    return row;
+  }
+
+  private async requireActiveByoNumber(
+    workspaceId: string,
+    numberId: string,
+  ): Promise<PhoneNumberRow> {
+    const row = await this.requireByoNumber(workspaceId, numberId);
+    if (row.status !== "active") {
+      throw new AppError({
+        code: ErrorCode.CONFLICT,
+        message: `The SIP trunk is ${row.status}; wait until it is active`,
+      });
+    }
+    return row;
+  }
+
   private async provision(
     row: PhoneNumberRow,
     options: { agentId: string | null },
@@ -428,6 +693,7 @@ export class PhoneNumbersService {
       agentId: row.assigned_agent_id,
       e164: row.phone_number,
       roomPrefix: `qs-call-${row.id}-`,
+      provider: row.provider,
     };
   }
 
@@ -479,6 +745,14 @@ export class PhoneNumbersService {
       message: `Telnyx number order ${orderId} is still pending; retry the purchase shortly`,
     });
   }
+}
+
+function byoMetadata(allowedAddresses: string[], authUsername: string | null) {
+  return {
+    allowed_addresses: allowedAddresses,
+    auth_username: authUsername,
+    has_credentials: authUsername !== null,
+  };
 }
 
 function normalizeE164(input: string): string {
