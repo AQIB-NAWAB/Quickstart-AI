@@ -93,11 +93,7 @@ docker compose up -d --wait
 bold "2) Migrations (shared Postgres)"
 pnpm --filter @quickstart/contracts build
 export DATABASE_URL="${DATABASE_URL:-postgresql://quickstart:quickstart@localhost:5433/quickstart}"
-make identity-migrate workspace-migrate agent-migrate conversation-migrate \
-  web-fetch-migrate knowledge-migrate memory-migrate secrets-migrate \
-  workflow-migrate campaign-migrate lead-migrate \
-  eval-migrate usage-migrate audit-migrate \
-  || true
+make migrate-all || true
 
 bold "3) Start services"
 start_svc identity services/identity-service "${IDENTITY_PORT:-3001}"

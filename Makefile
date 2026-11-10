@@ -1,4 +1,4 @@
-.PHONY: up down logs ps smoke playground integrity identity-migrate workspace-migrate agent-migrate conversation-migrate web-fetch-migrate knowledge-migrate knowledge-smoke memory-migrate secrets-migrate workflow-migrate campaign-migrate lead-migrate eval-migrate data-plane-up data-plane-down data-plane-logs data-plane-smoke sip-config sip-up sip-down sip-logs sip-check
+.PHONY: up down logs ps smoke playground integrity migrate-all voice-migrate identity-migrate workspace-migrate agent-migrate conversation-migrate web-fetch-migrate knowledge-migrate knowledge-smoke memory-migrate secrets-migrate workflow-migrate campaign-migrate lead-migrate eval-migrate data-plane-up data-plane-down data-plane-logs data-plane-smoke sip-config sip-up sip-down sip-logs sip-check
 
 COMPOSE = docker compose
 
@@ -93,9 +93,19 @@ data-plane-smoke:
 ps:
 	$(COMPOSE) ps
 
+voice-migrate:
+	pnpm --filter @quickstart/service-voice build
+	pnpm --filter @quickstart/service-voice migrate
+
 lead-generation-migrate:
 	pnpm --filter @quickstart/service-lead-generation build
 	pnpm --filter @quickstart/service-lead-generation migrate
+
+migrate-all: identity-migrate workspace-migrate agent-migrate conversation-migrate \
+	web-fetch-migrate knowledge-migrate memory-migrate secrets-migrate \
+	workflow-migrate campaign-migrate lead-migrate voice-migrate \
+	lead-generation-migrate eval-migrate usage-migrate audit-migrate
+	@echo "All migrations applied successfully."
 
 sip-config:
 	@chmod +x deploy/sip/render-config.sh
