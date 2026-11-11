@@ -17,7 +17,7 @@ export function VersionScoreComparison({
   datasetName,
   datasetRevision,
   scoringPolicy,
-  selectedVersion = "v8",
+  selectedVersion,
   onSelectVersion,
 }: VersionScoreComparisonProps) {
   const [activeHover, setActiveHover] = useState<VersionComparisonPoint | null>(null);
@@ -64,6 +64,9 @@ export function VersionScoreComparison({
 
       {/* SVG Bar Chart */}
       <div className="flex-1 flex flex-col justify-end pt-2">
+        {points.length === 0 && (
+          <p className="text-xs text-[#737373]">No completed runs for this dataset revision and scoring policy.</p>
+        )}
         <div className="relative w-full h-[150px]">
           <svg
             viewBox={`0 0 ${chartWidth} ${chartHeight + 30}`}
@@ -163,7 +166,7 @@ export function VersionScoreComparison({
 
       {/* Footer */}
       <div className="pt-2 border-t border-[#ededed] text-[11px] text-[#a3a3a3] font-mono">
-        Overall score /100 · Support basics rev2 · support-v1
+        Overall score /100 · {datasetName} rev{datasetRevision} · {scoringPolicy}
       </div>
     </div>
   );

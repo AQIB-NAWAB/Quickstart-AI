@@ -10,6 +10,7 @@ import type {
   FixtureResponse,
   ScoringMethod,
 } from "./types";
+import { mapApiCase, mapApiCaseResult, mapApiDataset, mapApiRun, mapApiSummary } from "./mappers";
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; status: number };
 
@@ -34,8 +35,16 @@ async function apiFetch<T>(url: string, options: RequestInit = {}): Promise<ApiR
       return { ok: false, error: message, status: res.status };
     }
 
-    const data = (await res.json()) as T;
-    return { ok: true, data };
+    const data = (await res.json()) as Record<string, unknown>;
+    if (data.dataset) data.dataset = mapApiDataset(data.dataset);
+    if (Array.isArray(data.datasets)) data.datasets = data.datasets.map(mapApiDataset);
+    if (data.case) data.case = mapApiCase(data.case);
+    if (Array.isArray(data.cases)) data.cases = data.cases.map(mapApiCase);
+    if (data.run) data.run = mapApiRun(data.run);
+    if (Array.isArray(data.runs)) data.runs = data.runs.map(mapApiRun);
+    if (Array.isArray(data.results)) data.results = data.results.map(mapApiCaseResult);
+    if (data.summary) data.summary = mapApiSummary(data.summary);
+    return { ok: true, data: data as T };
   } catch (err) {
     return {
       ok: false,

@@ -28,11 +28,11 @@ export const serverEvaluationRepository: EvaluationRepository = {
 
     const [datasetsRes, runsRes, summaryRes] = await Promise.all([
       gatewayFetch<{ datasets: any[]; total: number }>(
-        `/v1/workspaces/${encodeURIComponent(workspaceId)}/eval/datasets?limit=50`,
+        `/v1/workspaces/${encodeURIComponent(workspaceId)}/eval/datasets?limit=50&agent_id=${encodeURIComponent(agentId)}`,
         { accessToken: token },
       ),
       gatewayFetch<{ runs: any[]; total: number }>(
-        `/v1/workspaces/${encodeURIComponent(workspaceId)}/eval/runs?limit=20`,
+        `/v1/workspaces/${encodeURIComponent(workspaceId)}/eval/runs?limit=20&agent_id=${encodeURIComponent(agentId)}`,
         { accessToken: token },
       ),
       gatewayFetch<{ summary: any }>(
@@ -42,9 +42,10 @@ export const serverEvaluationRepository: EvaluationRepository = {
     ]);
 
     if (!datasetsRes.ok) return fail(datasetsRes.status, datasetsRes.error.message);
+    if (!runsRes.ok) return fail(runsRes.status, runsRes.error.message);
 
     const datasets = (datasetsRes.data.datasets ?? []).map(mapApiDataset);
-    const runs = runsRes.ok ? (runsRes.data.runs ?? []).map(mapApiRun) : [];
+    const runs = (runsRes.data.runs ?? []).map(mapApiRun);
     const summary = summaryRes.ok ? mapApiSummary(summaryRes.data.summary) : undefined;
 
     const selectedDataset = (datasetId ? datasets.find((d) => d.id === datasetId) : null) ||
@@ -63,6 +64,31 @@ export const serverEvaluationRepository: EvaluationRepository = {
       };
 
     const latestRun = runs[0] ?? null;
+    const referenceRun = runs.find(
+      (run) => run.datasetId === selectedDataset.id && run.datasetRevision === selectedDataset.revision && run.status === "completed",
+    );
+    const scoringPolicy = referenceRun?.policy?.method ?? "exact_match";
+    const comparableRuns = runs.filter(
+      (run) =>
+        run.status === "completed" &&
+        run.score != null &&
+        run.datasetId === selectedDataset.id &&
+        run.datasetRevision === selectedDataset.revision &&
+        JSON.stringify(run.policy) === JSON.stringify(referenceRun?.policy),
+    );
+    const versions = new Set<string>();
+    const comparison = comparableRuns.flatMap((run) => {
+      const version = run.agentVersionId;
+      if (!version || versions.has(version)) return [];
+      versions.add(version);
+      return [{
+        version,
+        score: run.score!,
+        passed: run.passedCount ?? 0,
+        total: run.caseCount ?? 0,
+        date: run.createdAt ?? "",
+      }];
+    }).reverse();
 
     return {
       status: "ready",
@@ -70,14 +96,14 @@ export const serverEvaluationRepository: EvaluationRepository = {
         agentId,
         agentName: latestRun?.agentName ?? "Agent",
         selectedDataset,
-        scoringPolicy: latestRun?.policy?.method ?? "exact_match",
+        scoringPolicy,
         latestScore: latestRun?.score ?? null,
         scoreScale: 100,
         passedCases: latestRun?.passedCount ?? null,
         failedCases: latestRun?.failedCount ?? null,
         totalCases: selectedDataset.caseCount,
         latestRun,
-        comparison: [],
+        comparison,
         datasets,
         recentRuns: runs,
         summary,
@@ -120,9 +146,10 @@ export const serverEvaluationRepository: EvaluationRepository = {
     ]);
 
     if (!datasetRes.ok) return fail(datasetRes.status, datasetRes.error.message);
+    if (!casesRes.ok) return fail(casesRes.status, casesRes.error.message);
 
     const dataset = mapApiDataset(datasetRes.data.dataset);
-    const cases = casesRes.ok ? (casesRes.data.cases ?? []).map(mapApiCase) : [];
+    const cases = (casesRes.data.cases ?? []).map(mapApiCase);
 
     return {
       status: "ready",
