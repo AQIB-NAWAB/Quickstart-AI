@@ -2974,6 +2974,7 @@ We will not have a year of on-call practice. We will have a system another engin
 | Date | Feature | Shipped | Still unsafe |
 | --- | --- | --- | --- |
 | 2026-11-11 | F11 | Agent-scoped overview, accurate run status, browser response mapping, and comparison of recent compatible runs | End-to-end verification and run-history pagination remain; chart covers the latest 20 runs only |
+| 2026-11-11 | F11 | Cursor-based run history, tenant-scoped indexes, run-detail polling, and pagination tests | End-to-end UI verification remains; chart covers the latest 20 runs only |
 | 2026-09-28 | 10B | `web-fetch-service` :3007, ADR 0011, contracts, tests | No ledger consumer; artifacts in Postgres only |
 | 2026-09-28 | 12 | `runtime-service` :3006, gateway proxy, chat turns + tests | No stream; no voice-turn contract; no Redis membership on path |
 | 2026-09-28 | roadmap | §5A–5C order; knowledge-first focus; board statuses | Voice in §5C; 09B → 11 → 13 is current focus |
@@ -3635,7 +3636,7 @@ No SSO/SAML configuration. No IP allowlisting. No audit log for secret access fr
 
 ### Feature F11 — Agent Evaluation UI
 
-**Status:** `in_progress` — evaluation screens and API integration exist; agent overview scoping and failed-read handling corrected. End-to-end verification and pagination remain.
+**Status:** `in_progress` — evaluation screens, API integration, and cursor-based run history exist. End-to-end verification remains.
 **Needs:** F1, evaluation (25)
 **Can run beside:** F9
 **Deep topic:** offline eval run lifecycle (queued→running→scored); regression detection across versions; score comparison chart
@@ -3662,10 +3663,10 @@ Pages:
 - [ ] Test case editor (input, expected output, expected tools)
 - [ ] CSV import for test cases
 - [ ] Trigger eval run (select version + dataset)
-- [ ] Run history with scores and cursor pagination
+- [x] Run history with scores and cursor pagination
 - [ ] Run detail: overall score, per-case pass/fail table
 - [ ] Version comparison bar chart
-- [ ] Run status polling (queued → running → scored), stops on terminal state
+- [x] Run status polling (queued → running → scored), stops on terminal state
 
 #### Done when
 

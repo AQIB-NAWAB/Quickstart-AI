@@ -454,8 +454,9 @@ export class EvalService {
       end_date?: string;
       limit?: number;
       offset?: number;
+      cursor?: string;
     } = {},
-  ): Promise<{ runs: EvalRun[]; total: number }> {
+  ): Promise<{ runs: EvalRun[]; total: number; nextCursor: string | null }> {
     return this.repo.listRuns(workspaceId, {
       agentId: filters.agent_id ?? filters.agentId,
       versionId: filters.version_id ?? filters.versionId,
@@ -464,6 +465,7 @@ export class EvalService {
       endDate: filters.end_date ? new Date(filters.end_date) : undefined,
       limit: filters.limit,
       offset: filters.offset,
+      cursor: filters.cursor,
     });
   }
 

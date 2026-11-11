@@ -11,7 +11,8 @@ import {
   XCircle,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import type { EvaluationCaseResult, EvaluationRun } from "../lib/types";
 
 interface RunDetailProps {
@@ -27,6 +28,12 @@ export function RunDetail({
   results,
   isPreview = false,
 }: RunDetailProps) {
+  const router = useRouter();
+  useEffect(() => {
+    if (isPreview || (run.status !== "queued" && run.status !== "running")) return;
+    const timer = setInterval(() => router.refresh(), 3000);
+    return () => clearInterval(timer);
+  }, [isPreview, run.status, router]);
   const [filter, setFilter] = useState<"all" | "passed" | "failed">("all");
   const [search, setSearch] = useState("");
   // Default to first failed case if available, else first result

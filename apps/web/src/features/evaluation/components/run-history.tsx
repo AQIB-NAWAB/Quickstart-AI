@@ -39,35 +39,48 @@ export function RunHistory({
   const [search, setSearch] = useState("");
   const [isStartEvalOpen, setIsStartEvalOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [cursors, setCursors] = useState<Array<string | null>>([null]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const cursor = cursors[cursors.length - 1];
 
   const basePath = isPreview ? "/preview/eval" : `/workspaces/${workspaceId}/eval`;
 
-  // Live polling: every 3s if any run is running or queued
   const hasActiveRun = runs.some((r) => r.status === "queued" || r.status === "running");
 
   useEffect(() => {
-    if (!hasActiveRun || isPreview) return;
-
-    const interval = setInterval(async () => {
-      try {
-        const res = await EvaluationApiClient.listRuns(workspaceId, { agentId });
-        if (res.ok) {
-          setRuns(res.data.runs);
-        }
-      } catch {
-        // Ignored
-      }
-    }, 3000);
-
-    return () => clearInterval(interval);
-  }, [hasActiveRun, isPreview, workspaceId, agentId]);
+    if (isPreview) return;
+    const controller = new AbortController();
+    const load = async () => {
+      const res = await EvaluationApiClient.listRuns(workspaceId, {
+        agentId, cursor: cursor ?? undefined, limit: 20,
+        status: statusFilter === "all" ? undefined : statusFilter,
+      }, controller.signal);
+      if (controller.signal.aborted) return;
+      if (res.ok) {
+        setRuns(res.data.runs);
+        setNextCursor(res.data.next_cursor);
+        setLoadError(null);
+      } else setLoadError(res.error);
+    };
+    void load();
+    const interval = hasActiveRun ? setInterval(load, 3000) : undefined;
+    return () => { controller.abort(); if (interval) clearInterval(interval); };
+  }, [hasActiveRun, isPreview, workspaceId, agentId, cursor, statusFilter]);
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
     try {
-      const res = await EvaluationApiClient.listRuns(workspaceId, { agentId });
+      const res = await EvaluationApiClient.listRuns(workspaceId, {
+        agentId, cursor: cursor ?? undefined, limit: 20,
+        status: statusFilter === "all" ? undefined : statusFilter,
+      });
       if (res.ok) {
         setRuns(res.data.runs);
+        setNextCursor(res.data.next_cursor);
+        setLoadError(null);
+      } else {
+        setLoadError(res.error);
       }
     } finally {
       setIsRefreshing(false);
@@ -232,7 +245,7 @@ export function RunHistory({
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search runs by ID, agent, or version..."
+            placeholder="Search runs on this page..."
             className="w-full rounded-lg border border-[#DCE1E8] bg-white pl-9 pr-3 py-2 text-xs text-[#18181B] focus:border-[#FF571A] focus:outline-none"
           />
         </div>
@@ -244,7 +257,7 @@ export function RunHistory({
           </div>
           <select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
+            onChange={(e) => { setStatusFilter(e.target.value); setCursors([null]); }}
             className="rounded-lg border border-[#DCE1E8] bg-white px-3 py-1.5 text-xs font-medium text-[#18181B] focus:border-[#FF571A] focus:outline-none"
           >
             <option value="all">All Statuses</option>
@@ -255,6 +268,8 @@ export function RunHistory({
           </select>
         </div>
       </div>
+
+      {loadError && <p role="alert" className="text-xs text-[#B42318]">{loadError}</p>}
 
       {/* Runs Table matching Image 5 */}
       <div className="rounded-xl border border-[#EAECF0] bg-white overflow-hidden shadow-xs">
@@ -388,6 +403,14 @@ export function RunHistory({
           </table>
         </div>
       </div>
+
+      {!isPreview && !isCompact && (
+        <div className="flex items-center justify-end gap-3 text-xs">
+          <button type="button" disabled={cursors.length === 1} onClick={() => setCursors((prev) => prev.slice(0, -1))} className="rounded border px-3 py-1.5 disabled:opacity-50">Previous</button>
+          <span>Page {cursors.length}</span>
+          <button type="button" disabled={!nextCursor} onClick={() => { if (nextCursor) setCursors((prev) => [...prev, nextCursor]); }} className="rounded border px-3 py-1.5 disabled:opacity-50">Next</button>
+        </div>
+      )}
 
       {/* Start Evaluation Modal */}
       <StartEvaluationDialog
