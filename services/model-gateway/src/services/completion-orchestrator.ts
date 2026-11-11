@@ -5,6 +5,7 @@ import type {
 } from "@quickstart/contracts";
 import { AppError, ErrorCode } from "@quickstart/errors";
 import type { Logger } from "@quickstart/logging";
+import { recordModelTimeout } from "@quickstart/tracing";
 import { CircuitBreaker } from "@quickstart/utilities";
 import type { ModelGatewayConfig } from "../config/environment.js";
 import { ProviderError } from "../domain/types.js";
@@ -289,6 +290,7 @@ export class CompletionOrchestrator {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
+        recordModelTimeout();
         reject(
           new AppError({
             code: ErrorCode.UPSTREAM_TIMEOUT,

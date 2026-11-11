@@ -24,7 +24,7 @@ export function platformErrorMiddleware(logger: Logger): ErrorRequestHandler {
     const requestId = requestIdFromResponse(res);
     logger.warn("request.failed", {
       request_id: requestId,
-      error: error instanceof Error ? error.message : "unknown",
+      error_code: error instanceof AppError ? error.code : "INTERNAL_ERROR",
     });
     sendPlatformError(res, error, requestId);
   };

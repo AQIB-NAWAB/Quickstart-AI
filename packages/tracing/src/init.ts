@@ -1,6 +1,13 @@
 import { diag, DiagConsoleLogger, DiagLogLevel } from "@opentelemetry/api";
+import { randomUUID } from "node:crypto";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
+import { OTLPMetricExporter } from "@opentelemetry/exporter-metrics-otlp-http";
 import { Resource } from "@opentelemetry/resources";
+import {
+  ExplicitBucketHistogramAggregation,
+  PeriodicExportingMetricReader,
+  View,
+} from "@opentelemetry/sdk-metrics";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { ATTR_SERVICE_NAME } from "@opentelemetry/semantic-conventions";
 
@@ -29,10 +36,27 @@ export async function initTracing(options: InitTracingOptions): Promise<void> {
   });
 
   sdk = new NodeSDK({
+    // Process command-line arguments can contain secrets; keep exported resources bounded.
+    autoDetectResources: false,
     resource: new Resource({
       [ATTR_SERVICE_NAME]: options.serviceName,
+      "service.instance.id": randomUUID(),
     }),
     traceExporter,
+    views: [
+      new View({
+        instrumentName: "quickstart.http.duration",
+        aggregation: new ExplicitBucketHistogramAggregation([
+          0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30,
+        ]),
+      }),
+    ],
+    metricReader: new PeriodicExportingMetricReader({
+      exporter: new OTLPMetricExporter({
+        url: `${endpoint.replace(/\/v1\/traces\/?$/, "").replace(/\/$/, "")}/v1/metrics`,
+      }),
+      exportIntervalMillis: 15_000,
+    }),
   });
 
   sdk.start();
