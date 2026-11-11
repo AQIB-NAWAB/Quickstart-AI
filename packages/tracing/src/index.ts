@@ -6,4 +6,5 @@ export {
   recordGatewayRedisFailure,
   recordModelTimeout,
   recordAgentPublish,
+  recordPoolStats,
 } from "./metrics.js";

@@ -2773,7 +2773,7 @@ No SIEM export. No immutable WORM storage. The rows are append-only in applicati
 
 ## 31. Feature 28 — Observability and alerts
 
-**Status:** `in_progress` — HTTP, 429, publish, Redis fail-closed and model timeout signals, local Prometheus rules, and error-log proof; saturation metrics remain.
+**Status:** `in_progress` — HTTP, 429, publish, Redis fail-closed, model timeout and eval database pool saturation signals, local Prometheus rules, and error-log proof; other services' saturation metrics remain.
 **Needs:** services already emit logs and traces through the shared libraries  
 **Deep topic:** observability
 
@@ -2973,7 +2973,7 @@ We will not have a year of on-call practice. We will have a system another engin
 
 | Date | Feature | Shipped | Still unsafe |
 | --- | --- | --- | --- |
-| 2026-11-11 | 28 | OTLP HTTP, 429, publish, Redis fail-closed and model timeout metrics, local Prometheus rules, and secret-free error log test | Worker and database saturation, paging, and production metrics infrastructure remain |
+| 2026-11-11 | 28 | OTLP HTTP, 429, publish, Redis fail-closed, model timeout and eval database pool saturation metrics, local Prometheus rules, and secret-free error log test | Other worker/database saturation, paging, and production metrics infrastructure remain |
 | 2026-11-11 | F11 | Agent-scoped overview, accurate run status, browser response mapping, and comparison of recent compatible runs | End-to-end verification and run-history pagination remain; chart covers the latest 20 runs only |
 | 2026-09-28 | 10B | `web-fetch-service` :3007, ADR 0011, contracts, tests | No ledger consumer; artifacts in Postgres only |
 | 2026-09-28 | 12 | `runtime-service` :3006, gateway proxy, chat turns + tests | No stream; no voice-turn contract; no Redis membership on path |

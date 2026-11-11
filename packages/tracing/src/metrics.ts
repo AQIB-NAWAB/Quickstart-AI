@@ -21,7 +21,26 @@ function createInstruments() {
   const publishes = meter.createCounter("quickstart.agent.published", {
     description: "Successful agent publishes",
   });
-  return { requests, duration, redisFailures, modelTimeouts, rateLimited, publishes };
+  const poolTotal = meter.createGauge("quickstart.db.pool.total", {
+    description: "Postgres pool connections",
+  });
+  const poolIdle = meter.createGauge("quickstart.db.pool.idle", {
+    description: "Idle Postgres pool connections",
+  });
+  const poolWaiting = meter.createGauge("quickstart.db.pool.waiting", {
+    description: "Requests waiting for a Postgres connection",
+  });
+  return {
+    requests,
+    duration,
+    redisFailures,
+    modelTimeouts,
+    rateLimited,
+    publishes,
+    poolTotal,
+    poolIdle,
+    poolWaiting,
+  };
 }
 
 let instruments: ReturnType<typeof createInstruments> | undefined;
@@ -49,4 +68,11 @@ export function recordModelTimeout(): void {
 }
 export function recordAgentPublish(): void {
   getInstruments().publishes.add(1);
+}
+
+export function recordPoolStats(pool: string, total: number, idle: number, waiting: number): void {
+  const instruments = getInstruments();
+  instruments.poolTotal.record(total, { pool });
+  instruments.poolIdle.record(idle, { pool });
+  instruments.poolWaiting.record(waiting, { pool });
 }

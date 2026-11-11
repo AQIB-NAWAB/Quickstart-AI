@@ -25,3 +25,10 @@ groups:
           severity: warning
         annotations:
           summary: Model provider attempts are timing out
+      - alert: EvalDatabasePoolWaiting
+        expr: max(quickstart_db_pool_waiting{pool="eval"}) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Evaluation requests are waiting for a database connection

@@ -20,6 +20,7 @@ test("metrics export bounded request labels and failure counters", async () => {
     instruments.recordModelTimeout();
     instruments.recordHttpRequest("GET", 429, 0.1);
     instruments.recordAgentPublish();
+    instruments.recordPoolStats("eval", 8, 1, 2);
     await provider.forceFlush();
     const output = exporter
       .getMetrics()
@@ -34,6 +35,8 @@ test("metrics export bounded request labels and failure counters", async () => {
     assert.ok(output.some((metric) => metric.descriptor.name === "quickstart.model.timeout"));
     assert.ok(output.some((metric) => metric.descriptor.name === "quickstart.http.rate_limited"));
     assert.ok(output.some((metric) => metric.descriptor.name === "quickstart.agent.published"));
+    const poolWaiting = output.find((metric) => metric.descriptor.name === "quickstart.db.pool.waiting");
+    assert.equal(poolWaiting?.dataPoints[0]?.value, 2);
   } finally {
     await provider.shutdown();
     metrics.disable();
