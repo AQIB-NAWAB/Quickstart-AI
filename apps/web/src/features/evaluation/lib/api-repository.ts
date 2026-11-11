@@ -303,9 +303,10 @@ export class EvaluationApiClient {
       endDate?: string;
       limit?: number;
       offset?: number;
+      cursor?: string;
     } = {},
     signal?: AbortSignal,
-  ): Promise<ApiResult<{ runs: EvaluationRun[]; total: number }>> {
+  ): Promise<ApiResult<{ runs: EvaluationRun[]; total: number; next_cursor: string | null }>> {
     const params = new URLSearchParams();
     if (filters.agentId) params.set("agent_id", filters.agentId);
     if (filters.versionId) params.set("version_id", filters.versionId);
@@ -314,9 +315,10 @@ export class EvaluationApiClient {
     if (filters.endDate) params.set("end_date", filters.endDate);
     if (filters.limit) params.set("limit", String(filters.limit));
     if (filters.offset) params.set("offset", String(filters.offset));
+    if (filters.cursor) params.set("cursor", filters.cursor);
     const qs = params.toString();
 
-    return apiFetch<{ runs: EvaluationRun[]; total: number }>(
+    return apiFetch<{ runs: EvaluationRun[]; total: number; next_cursor: string | null }>(
       `/api/workspaces/${encodeURIComponent(workspaceId)}/eval/runs${qs ? `?${qs}` : ""}`,
       { signal },
     );

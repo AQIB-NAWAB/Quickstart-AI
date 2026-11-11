@@ -338,9 +338,9 @@ export function createEvalController(evals: EvalService) {
     /* Runs */
     listRuns: (async (req, res) => {
       const workspaceId = routeParam(req.params.workspaceId);
-      const { agent_id, agentId, version_id, versionId, status, start_date, end_date, limit, offset } =
+      const { agent_id, agentId, version_id, versionId, status, start_date, end_date, limit, offset, cursor } =
         req.query as Record<string, string>;
-      const { runs, total } = await evals.listRuns(workspaceId, {
+      const { runs, total, nextCursor } = await evals.listRuns(workspaceId, {
         agentId: agent_id ?? agentId,
         versionId: version_id ?? versionId,
         status,
@@ -348,10 +348,12 @@ export function createEvalController(evals: EvalService) {
         end_date,
         limit: limit ? Number(limit) : undefined,
         offset: offset ? Number(offset) : undefined,
+        cursor,
       });
       sendPlatformJson(res, 200, {
         runs: runs.map(toApiRun),
         total,
+        next_cursor: nextCursor,
       });
     }) as RequestHandler,
 

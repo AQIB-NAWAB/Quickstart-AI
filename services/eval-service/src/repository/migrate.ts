@@ -8,6 +8,7 @@ const MIGRATION_FILES = [
   "001_eval.sql",
   "002_eval_suite_v2.sql",
   "003_eval_gates_and_unavailability.sql",
+  "004_eval_run_cursor_index.sql",
 ] as const;
 
 export async function runEvalMigrations(pool: Pool): Promise<void> {

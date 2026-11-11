@@ -915,8 +915,9 @@ export class EvalRepository {
       endDate?: Date;
       limit?: number;
       offset?: number;
+      cursor?: string;
     } = {},
-  ): Promise<{ runs: EvalRun[]; total: number }> {
+  ): Promise<{ runs: EvalRun[]; total: number; nextCursor: string | null }> {
     const conditions = ["workspace_id = $1"];
     const params: unknown[] = [workspaceId];
 
@@ -950,16 +951,40 @@ export class EvalRepository {
     const limit = Math.min(Math.max(Number(filters.limit ?? 50), 1), 200);
     const offset = Math.max(Number(filters.offset ?? 0), 0);
 
-    const result = await this.pool.query<RunRow>(
-      `SELECT * FROM eval_runs
+    if (filters.cursor) {
+      let cursor: { createdAt: string; id: string };
+      try {
+        if (filters.cursor.length > 512 || offset > 0) throw new Error("Invalid cursor");
+        cursor = JSON.parse(Buffer.from(filters.cursor, "base64url").toString("utf8"));
+        if (
+          typeof cursor.createdAt !== "string" ||
+          !/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}(?::?\d{2})?)$/.test(cursor.createdAt) ||
+          !Number.isFinite(Date.parse(cursor.createdAt)) ||
+          typeof cursor.id !== "string" ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cursor.id)
+        ) throw new Error("Invalid cursor");
+      } catch {
+        throw new AppError({ code: ErrorCode.VALIDATION_FAILED, message: "Invalid run cursor" });
+      }
+      params.push(cursor.createdAt, cursor.id);
+      conditions.push(`(created_at, id) < ($${params.length - 1}::timestamptz, $${params.length}::uuid)`);
+    }
+
+    const result = await this.pool.query<RunRow & { cursor_created_at: string }>(
+      `SELECT *, created_at::text AS cursor_created_at FROM eval_runs
        WHERE ${conditions.join(" AND ")}
-       ORDER BY created_at DESC
+       ORDER BY created_at DESC, id DESC
        LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-      [...params, limit, offset],
+      [...params, limit + 1, offset],
     );
+    const rows = result.rows.slice(0, limit);
+    const last = rows.at(-1);
     return {
-      runs: result.rows.map(mapRun),
+      runs: rows.map(mapRun),
       total,
+      nextCursor: result.rows.length > limit && last
+        ? Buffer.from(JSON.stringify({ createdAt: last.cursor_created_at, id: last.id })).toString("base64url")
+        : null,
     };
   }
 

@@ -88,6 +88,42 @@ async function withDb(run: (service: EvalService, repo: EvalRepository) => Promi
   }
 }
 
+test("run cursors preserve ordering across equal timestamps and isolate workspaces", async () => {
+  const pool = await openPglitePool();
+  try {
+    const repo = new EvalRepository(pool as unknown as Pool);
+    const workspace = randomUUID();
+    const otherWorkspace = randomUUID();
+    const agent = randomUUID();
+    const version = randomUUID();
+    const ids = Array.from({ length: 3 }, () => randomUUID());
+    for (const [index, id] of ids.entries()) {
+      await pool.query(
+        "INSERT INTO eval_runs (id, workspace_id, agent_id, agent_version_id, created_at) VALUES ($1, $2, $3, $4, $5)",
+        [id, workspace, agent, version, index === 2 ? "2026-01-01T00:00:00.123123Z" : "2026-01-01T00:00:00.123456Z"],
+      );
+    }
+    await pool.query(
+      "INSERT INTO eval_runs (workspace_id, agent_id, agent_version_id) VALUES ($1, $2, $3)",
+      [otherWorkspace, agent, version],
+    );
+    const first = await repo.listRuns(workspace, { limit: 2 });
+    assert.equal(first.total, 3);
+    assert.ok(first.nextCursor);
+    await pool.query(
+      "INSERT INTO eval_runs (workspace_id, agent_id, agent_version_id) VALUES ($1, $2, $3)",
+      [workspace, agent, version],
+    );
+    const second = await repo.listRuns(workspace, { limit: 2, cursor: first.nextCursor });
+    assert.equal(second.nextCursor, null);
+    assert.deepEqual([...first.runs, ...second.runs].map((run) => run.id).sort(), ids.sort());
+    assert.equal((await repo.listRuns(otherWorkspace, { cursor: first.nextCursor })).runs.length, 0);
+    await assert.rejects(repo.listRuns(workspace, { cursor: "invalid" }), /Invalid run cursor/);
+  } finally {
+    await pool.end();
+  }
+});
+
 test("cap rejects extra case on run create", async () => {
   await withDb(async (service) => {
     const workspaceId = randomUUID();
