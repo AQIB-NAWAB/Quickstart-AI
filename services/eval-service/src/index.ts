@@ -2,7 +2,7 @@ import type { Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 import { createLogger } from "@quickstart/logging";
-import { initTracing, shutdownTracing } from "@quickstart/tracing";
+import { initTracing, shutdownTracing, recordPoolStats } from "@quickstart/tracing";
 import {
   createCachedWorkspaceAccessClient,
   createHttpWorkspaceAccessClient,
@@ -26,6 +26,8 @@ export async function startEvalServer(): Promise<{
   await initTracing({ serviceName: SERVICE_NAME });
 
   const pool = new Pool({ connectionString: config.databaseUrl });
+  const poolMetrics = setInterval(() => recordPoolStats("eval", pool.totalCount, pool.idleCount, pool.waitingCount), 10_000);
+  poolMetrics.unref();
   const repo = new EvalRepository(pool);
   const runtime = new RuntimeEvalClient(
     config.runtimeUrl,
@@ -85,6 +87,7 @@ export async function startEvalServer(): Promise<{
       server.close((err) => (err ? reject(err) : resolve()));
     });
     await pool.end();
+    clearInterval(poolMetrics);
     if (redisClient.isOpen) {
       await redisClient.quit();
     }

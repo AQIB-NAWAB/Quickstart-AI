@@ -1,6 +1,7 @@
 import { AppError, ErrorCode } from "@quickstart/errors";
 import { requestIdFromResponse, sendPlatformError, type RequestHandler } from "@quickstart/http-server";
 import type { RedisClientType } from "redis";
+import { recordGatewayRedisFailure } from "@quickstart/tracing";
 
 export type RedisRateLimitBucket = {
   name: string;
@@ -65,6 +66,7 @@ export function createRedisRateLimitMiddleware(
       }
       return next();
     } catch {
+      recordGatewayRedisFailure();
       return sendPlatformError(
         res,
         new AppError({

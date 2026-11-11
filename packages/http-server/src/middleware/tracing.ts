@@ -8,14 +8,12 @@ export function tracingMiddleware(logger: Logger): RequestHandler {
   return (req, res, next) => {
     const requestId = requestIdFromResponse(res);
     const method = req.method;
-    const path = req.path;
 
-    void runWithSpan(`${method} ${path}`, { requestId }, async () => {
+    void runWithSpan(`HTTP ${method}`, { requestId }, async () => {
       const traceIds = getTraceIds();
       logger.info("request.received", {
         request_id: requestId,
         method,
-        path,
         trace_id: traceIds.traceId,
         span_id: traceIds.spanId,
       });

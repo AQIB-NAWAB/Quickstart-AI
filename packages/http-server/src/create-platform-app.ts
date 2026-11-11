@@ -6,6 +6,7 @@ import { createRateLimitMiddleware, type RateLimitOptions } from "./middleware/r
 import { requestIdMiddleware } from "./middleware/request-id.js";
 import { requestTimeoutMiddleware } from "./middleware/timeout.js";
 import { tracingMiddleware } from "./middleware/tracing.js";
+import { httpMetricsMiddleware } from "./middleware/metrics.js";
 
 export type PlatformHttpOptions = {
   logger: Logger;
@@ -43,6 +44,7 @@ export function createPlatformApp(options: PlatformHttpOptions): Application {
   app.set("trust proxy", 1);
 
   app.use(requestIdMiddleware());
+  app.use(httpMetricsMiddleware());
   app.use(tracingMiddleware(options.logger));
   app.use(requestTimeoutMiddleware(options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS));
   app.use(

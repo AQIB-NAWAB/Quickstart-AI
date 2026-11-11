@@ -95,6 +95,18 @@ services:
       retries: 6
       start_period: 15s
 
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    profiles: [observability]
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./infra/local/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/local/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - otel-collector
+
   minio:
     # Official `minio/minio` on Docker Hub often fails with "pull access denied"
     # (rate limits, stale login, or regional registry issues). Elestio mirror is API-compatible.

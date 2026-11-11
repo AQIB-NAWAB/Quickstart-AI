@@ -15,6 +15,7 @@ import type {
 import type { TenantContext } from "@quickstart/auth";
 import { s2sProfileAllowed } from "@quickstart/contracts";
 import { AppError, ErrorCode } from "@quickstart/errors";
+import { recordAgentPublish } from "@quickstart/tracing";
 import type {
   Agent,
   AgentEnvironmentComparison,
@@ -952,7 +953,9 @@ export class AgentsService {
         message: s2sCheck.reason,
       });
     }
-    return this.store.publish(tenant, agentId, baseVersion, audit);
+    const result = await this.store.publish(tenant, agentId, baseVersion, audit);
+    recordAgentPublish();
+    return result;
   }
 
   async rollback(

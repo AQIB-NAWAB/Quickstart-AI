@@ -307,7 +307,7 @@ Update these lines every day.
 | 25 | Evaluation | 12 | 26 | done |
 | 26 | Usage and billing | 10, 12, 21B, 21C | 25 | done |
 | 27 | Audit and security | all writes | 28 | done |
-| 28 | Observability and alerts | traces exist | 27 | not_started |
+| 28 | Observability and alerts | traces exist | 27 | in_progress |
 | 29 | Cloud deploy (AWS, Kubernetes, CI) | features above | 30 | not_started |
 | 30 | Load, failure, recovery, SDKs | 29 | 29 | not_started |
 | P1 | Docker images for our services | services exist | P2 | not_started |
@@ -2773,7 +2773,7 @@ No SIEM export. No immutable WORM storage. The rows are append-only in applicati
 
 ## 31. Feature 28 — Observability and alerts
 
-**Status:** `not_started`  
+**Status:** `in_progress` — HTTP, 429, publish, Redis fail-closed, model timeout and eval database pool saturation signals, local Prometheus rules, and error-log proof; other services' saturation metrics remain.
 **Needs:** services already emit logs and traces through the shared libraries  
 **Deep topic:** observability
 
@@ -2795,7 +2795,7 @@ The junior shortcut adds logs inside every if statement and never a metric. Or t
 
 ### Production shape
 
-Use the same `request_id` in logs, metrics labels (low cardinality), and traces. Do not put workspace id on a metric label if that creates 10,000 time series per metric without a plan. Prefer overall metrics plus a break-glass log query for one tenant.
+Use the same `request_id` in logs and traces, never as a metric label. Do not put workspace id on a metric label if that creates 10,000 time series per metric without a plan. Prefer overall metrics plus a break-glass log query for one tenant.
 
 Two copies of a service must export metrics the same way. An in-process counter that resets on deploy is a rate, not a monthly total. Monthly totals belong in the usage table.
 
@@ -2973,6 +2973,7 @@ We will not have a year of on-call practice. We will have a system another engin
 
 | Date | Feature | Shipped | Still unsafe |
 | --- | --- | --- | --- |
+| 2026-11-11 | 28 | OTLP HTTP, 429, publish, Redis fail-closed, model timeout and eval database pool saturation metrics, local Prometheus rules, and secret-free error log test | Other worker/database saturation, paging, and production metrics infrastructure remain |
 | 2026-11-11 | F11 | Agent-scoped overview, accurate run status, browser response mapping, and comparison of recent compatible runs | End-to-end verification and run-history pagination remain; chart covers the latest 20 runs only |
 | 2026-11-11 | F11 | Cursor-based run history, tenant-scoped indexes, run-detail polling, and pagination tests | End-to-end UI verification remains; chart covers the latest 20 runs only |
 | 2026-09-28 | 10B | `web-fetch-service` :3007, ADR 0011, contracts, tests | No ledger consumer; artifacts in Postgres only |

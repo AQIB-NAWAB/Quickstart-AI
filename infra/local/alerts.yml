@@ -1,0 +1,34 @@
+groups:
+  - name: quickstart
+    rules:
+      - alert: GatewayHighErrorRate
+        expr: |
+          sum(rate(quickstart_http_requests_total{service_name="service-gateway",status_class="5xx"}[5m]))
+          / clamp_min(sum(rate(quickstart_http_requests_total{service_name="service-gateway"}[5m])), 0.001) > 0.05
+          and sum(rate(quickstart_http_requests_total{service_name="service-gateway"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Gateway 5xx rate exceeds 5 percent
+      - alert: GatewayRedisFailClosed
+        expr: sum(rate(quickstart_gateway_redis_fail_closed_total{service_name="service-gateway"}[5m])) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Gateway is rejecting requests because the rate-limit store is unavailable
+      - alert: ModelTimeouts
+        expr: sum(rate(quickstart_model_timeout_total[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Model provider attempts are timing out
+      - alert: EvalDatabasePoolWaiting
+        expr: max(quickstart_db_pool_waiting{pool="eval"}) > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Evaluation requests are waiting for a database connection
