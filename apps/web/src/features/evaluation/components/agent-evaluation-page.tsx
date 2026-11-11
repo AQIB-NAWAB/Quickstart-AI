@@ -156,15 +156,18 @@ export function AgentEvaluationPage({
               <div className="text-xs font-medium text-[#71717A]">Latest Run</div>
               <div className="flex items-center gap-2 pt-1">
                 <span className="text-xl font-bold font-mono text-[#18181B]">
-                  {overviewData.latestRun?.displayVersion || "v8"}
+                  {overviewData.latestRun?.displayVersion || "—"}
                 </span>
-                <span className="rounded-full bg-[#E9F9EF] px-2 py-0.5 text-[10px] font-semibold text-[#027A48]">
-                  Completed
-                </span>
+                {overviewData.latestRun && (
+                  <span className="rounded-full bg-[#F1F3F5] px-2 py-0.5 text-[10px] font-semibold capitalize text-[#52525B]">
+                    {overviewData.latestRun.status}
+                  </span>
+                )}
               </div>
               <p className="text-[11px] text-[#71717A] truncate font-mono mt-1">
-                {overviewData.latestRun?.datasetName} (rev {overviewData.latestRun?.datasetRevision}
-                )
+                {overviewData.latestRun
+                  ? `${overviewData.latestRun.datasetName ?? "Dataset"} (rev ${overviewData.latestRun.datasetRevision ?? "—"})`
+                  : "No runs yet"}
               </p>
             </div>
           </div>

@@ -328,7 +328,7 @@ Update these lines every day.
 | F8 | Workflow and event builder UI | F1, 19, 20 | F7 | done |
 | F9 | Analytics and usage UI | F1, 26 | F8 | done |
 | F10 | Workspace settings — members, roles, API keys, billing, secrets | F1, 04, 05, 16 | F9 | done |
-| F11 | Agent evaluation UI | F1, 25 | F9 | not_started |
+| F11 | Agent evaluation UI | F1, 25 | F9 | in_progress |
 | F12 | Audit log and notification center | F1, 27 | F11 | done |
 | F13 | Developer portal — API reference, SDK docs, webhooks | F1, public API | F12 | done |
 
@@ -2973,6 +2973,7 @@ We will not have a year of on-call practice. We will have a system another engin
 
 | Date | Feature | Shipped | Still unsafe |
 | --- | --- | --- | --- |
+| 2026-11-11 | F11 | Agent-scoped overview, accurate run status, browser response mapping, and comparison of recent compatible runs | End-to-end verification and run-history pagination remain; chart covers the latest 20 runs only |
 | 2026-09-28 | 10B | `web-fetch-service` :3007, ADR 0011, contracts, tests | No ledger consumer; artifacts in Postgres only |
 | 2026-09-28 | 12 | `runtime-service` :3006, gateway proxy, chat turns + tests | No stream; no voice-turn contract; no Redis membership on path |
 | 2026-09-28 | roadmap | §5A–5C order; knowledge-first focus; board statuses | Voice in §5C; 09B → 11 → 13 is current focus |
@@ -3634,7 +3635,7 @@ No SSO/SAML configuration. No IP allowlisting. No audit log for secret access fr
 
 ### Feature F11 — Agent Evaluation UI
 
-**Status:** `not_started`
+**Status:** `in_progress` — evaluation screens and API integration exist; agent overview scoping and failed-read handling corrected. End-to-end verification and pagination remain.
 **Needs:** F1, evaluation (25)
 **Can run beside:** F9
 **Deep topic:** offline eval run lifecycle (queued→running→scored); regression detection across versions; score comparison chart
